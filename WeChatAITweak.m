@@ -853,8 +853,35 @@ static void WeChatAIInit(void) {
     }
     if (tableView) {
         detail = [detail stringByAppendingFormat:@"\n%@", [self dumpTable:tableView]];
+        detail = [detail stringByAppendingFormat:@"\ndataSource: %@ / delegate: %@",
+                  NSStringFromClass([tableView.dataSource class]),
+                  NSStringFromClass([tableView.delegate class])];
     } else {
         detail = [detail stringByAppendingString:@"\n（未找到表格）"];
+    }
+
+    // MMTableViewInfo 运行时方法（8.0.5x 的头文件不完整，方法名要看运行时）
+    Ivar infoIvar = class_getInstanceVariable([viewController class], "m_tableViewInfo");
+    if (infoIvar) {
+        id tableInfo = object_getIvar(viewController, infoIvar);
+        detail = [detail stringByAppendingFormat:@"\n\nMMTableViewInfo(%@) 方法：\n%@",
+                  NSStringFromClass([tableInfo class]),
+                  [self methodListOfClass:[tableInfo class] limit:40]];
+    }
+
+    // WCTableView 系列是否还存在、方法名是什么
+    Class sectionClass = NSClassFromString(@"WCTableViewSectionManager");
+    detail = [detail stringByAppendingFormat:@"\n\nWCTableViewSectionManager：%@\n%@",
+              sectionClass ? @"存在" : @"不存在",
+              sectionClass ? [self methodListOfClass:sectionClass limit:20] : @"-"];
+    Class cellClass = NSClassFromString(@"WCTableViewNormalCellManager");
+    detail = [detail stringByAppendingFormat:@"\n\nWCTableViewNormalCellManager：%@\n%@",
+              cellClass ? @"存在" : @"不存在",
+              cellClass ? [self methodListOfClass:cellClass limit:20] : @"-"];
+
+    if (detail.length > 2400) {
+        detail = [detail substringToIndex:2400];
+        detail = [detail stringByAppendingString:@"\n…（过长截断）"];
     }
 
     dispatch_async(dispatch_get_main_queue(), ^{
@@ -923,6 +950,18 @@ static void WeChatAIInit(void) {
     [self collectLabelsInView:view into:texts];
     if (texts.count == 0) return NSStringFromClass([view class]);
     return [texts componentsJoinedByString:@" | "];
+}
+
++ (NSString *)methodListOfClass:(Class)cls limit:(NSInteger)limit {
+    if (!cls) return @"-";
+    NSMutableArray *names = [NSMutableArray array];
+    unsigned int count = 0;
+    Method *methods = class_copyMethodList(cls, &count);
+    for (unsigned int i = 0; i < count && names.count < limit; i++) {
+        [names addObject:NSStringFromSelector(method_getName(methods[i]))];
+    }
+    free(methods);
+    return [names componentsJoinedByString:@"\n"];
 }
 
 + (void)collectLabelsInView:(UIView *)view into:(NSMutableArray *)texts {
