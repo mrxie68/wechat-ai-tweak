@@ -37,6 +37,10 @@
 @property (nonatomic, strong) UILabel *styleLabel;
 @property (nonatomic, strong) UITextView *styleView;
 @property (nonatomic, strong) UILabel *styleHint;
+@property (nonatomic, strong) UIView *profileCard;
+@property (nonatomic, strong) UILabel *profileLabel;
+@property (nonatomic, strong) UITextView *profileView;
+@property (nonatomic, strong) UILabel *profileHint;
 @property (nonatomic, strong) UIView *memoryCard;
 @property (nonatomic, strong) UILabel *memoryLabel;
 @property (nonatomic, strong) UILabel *memoryValueLabel;
@@ -221,6 +225,24 @@ static UITextField *makeRowField(NSString *placeholder) {
     self.styleHint.textColor = [UIColor secondaryLabelColor];
     [self.styleCard addSubview:self.styleHint];
 
+    // 基础信息（AI 聊天时以此为准，没写的绝不编造）
+    self.profileCard = makeCard();
+    [self.contentView addSubview:self.profileCard];
+    self.profileLabel = makeRowLabel(@"基础信息");
+    [self.profileCard addSubview:self.profileLabel];
+    self.profileView = [[UITextView alloc] initWithFrame:CGRectZero];
+    self.profileView.font = [UIFont systemFontOfSize:15];
+    self.profileView.text = [AISettings userProfile];
+    self.profileView.backgroundColor = [UIColor clearColor];
+    self.profileView.textContainerInset = UIEdgeInsetsMake(8, 4, 8, 4);
+    self.profileView.keyboardDismissMode = UIScrollViewKeyboardDismissModeInteractive;
+    [self.profileCard addSubview:self.profileView];
+    self.profileHint = [[UILabel alloc] initWithFrame:CGRectZero];
+    self.profileHint.text = @"填你的真实信息：称呼、在城里还是农村、工作、家里情况、爱吃/不吃啥、常去的地方等。AI 聊天只以此为准，没写的绝不编造。";
+    self.profileHint.font = [UIFont systemFontOfSize:12];
+    self.profileHint.textColor = [UIColor secondaryLabelColor];
+    [self.profileCard addSubview:self.profileHint];
+
     // 清空记忆（总开关：清掉所有会话的上下文）
     self.memoryCard = makeCard();
     [self.contentView addSubview:self.memoryCard];
@@ -287,6 +309,8 @@ static UITextField *makeRowField(NSString *placeholder) {
     y += textCardHeight + 12;
     self.styleCard.frame = CGRectMake(margin, y, cardWidth, textCardHeight);
     y += textCardHeight + 12;
+    self.profileCard.frame = CGRectMake(margin, y, cardWidth, textCardHeight);
+    y += textCardHeight + 12;
 
     self.memoryCard.frame = CGRectMake(margin, y, cardWidth, rowHeight);
     y += rowHeight + 12;
@@ -320,6 +344,10 @@ static UITextField *makeRowField(NSString *placeholder) {
     self.styleLabel.frame = CGRectMake(16, 12, cardWidth - 32, 20);
     self.styleView.frame = CGRectMake(12, 38, cardWidth - 24, textCardHeight - 38 - 26);
     self.styleHint.frame = CGRectMake(16, textCardHeight - 22, cardWidth - 32, 16);
+
+    self.profileLabel.frame = CGRectMake(16, 12, cardWidth - 32, 20);
+    self.profileView.frame = CGRectMake(12, 38, cardWidth - 24, textCardHeight - 38 - 26);
+    self.profileHint.frame = CGRectMake(16, textCardHeight - 22, cardWidth - 32, 16);
 
     self.memoryLabel.frame = CGRectMake(16, 0, 200, rowHeight);
     self.memoryValueLabel.frame = CGRectMake(cardWidth - 50, 0, 30, rowHeight);
@@ -507,6 +535,7 @@ static UITextField *makeRowField(NSString *placeholder) {
     [AISettings setReplyDelay:(delay > 0 && delay <= 30) ? delay : kAIReplyDelaySeconds];
     [AISettings setAutoSystemPrompt:self.textView.text];
     [AISettings setStyleSamples:self.styleView.text];
+    [AISettings setUserProfile:self.profileView.text];
     [self dismissOrPop];
 }
 
@@ -522,6 +551,7 @@ static UITextField *makeRowField(NSString *placeholder) {
     self.delayField.text = [NSString stringWithFormat:@"%.1f", kAIReplyDelaySeconds];
     self.textView.text = kAIAutoSystemPrompt;
     self.styleView.text = kAIStyleSamplesDefault;
+    self.profileView.text = kAIUserProfile;
 }
 
 @end

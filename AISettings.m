@@ -3,6 +3,7 @@
 
 static NSString * const kAISettingsAutoPromptKey = @"WeChatAIAutoSystemPrompt";
 static NSString * const kAISettingsStyleSamplesKey = @"WeChatAIStyleSamples";
+static NSString * const kAISettingsUserProfileKey = @"WeChatAIUserProfile";
 static NSString * const kAISettingsAPIKeyKey = @"WeChatAIAPIKey";
 static NSString * const kAISettingsModelKey = @"WeChatAIModel";
 static NSString * const kAISettingsReplyModeKey = @"WeChatAIReplyMode";
@@ -40,6 +41,22 @@ static NSString * const kAISettingsChatOverridesKey = @"WeChatAIChatOverrides";
         [defaults setObject:samples forKey:kAISettingsStyleSamplesKey];
     } else {
         [defaults removeObjectForKey:kAISettingsStyleSamplesKey];
+    }
+    [defaults synchronize];
+}
+
++(NSString *)userProfile {
+    NSString *stored = [[NSUserDefaults standardUserDefaults] stringForKey:kAISettingsUserProfileKey];
+    if (stored.length > 0) return stored;
+    return kAIUserProfile;
+}
+
++(void)setUserProfile:(NSString *)profile {
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    if (profile.length > 0) {
+        [defaults setObject:profile forKey:kAISettingsUserProfileKey];
+    } else {
+        [defaults removeObjectForKey:kAISettingsUserProfileKey];
     }
     [defaults synchronize];
 }

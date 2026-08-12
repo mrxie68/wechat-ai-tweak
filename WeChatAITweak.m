@@ -792,6 +792,7 @@ static NSMutableArray *g_recentReplyOrder = nil;
         [[AIAPIClient shared] sendMessages:history
                               systemPrompt:kAISystemPrompt
                               styleProfile:[AISettings styleProfileForChat:chatId]
+                              userProfile:[AISettings userProfile]
                                 completion:^(NSString *reply, NSError *error) {
             @synchronized (self) {
                 [g_inFlightChats removeObject:chatId];
@@ -866,6 +867,7 @@ static NSMutableArray *g_recentReplyOrder = nil;
         [[AIAPIClient shared] sendMessages:history
                               systemPrompt:[AISettings autoSystemPrompt]
                               styleProfile:[AISettings styleProfileForChat:chatId]
+                              userProfile:[AISettings userProfile]
                                 completion:^(NSString *reply, NSError *error) {
             @synchronized (self) {
                 [g_inFlightChats removeObject:chatId];
@@ -1182,10 +1184,11 @@ static NSMutableArray *g_recentReplyOrder = nil;
         NSString *learnPrompt = @"你是一名聊天风格分析师。以下是某微信用户与其好友最近的聊天记录：带“我：”前缀的是用户本人发的，带“对方：”前缀的是对方发的（若没有前缀，说明数据库未提供发送方信息，请结合语境综合判断）。请总结这位“用户本人”的说话风格：语气、常用词/口头禅、句子长短、是否爱用表情和标点、回复习惯、惯用开场或结束语。用 150~250 字的中文直接输出总结，不要客套，不要写“分析如下”之类的开头。";
         NSArray *messages = @[@{@"role": @"user", @"content": joined}];
 
-        [[AIAPIClient shared] sendMessages:messages
-                              systemPrompt:learnPrompt
-                              styleProfile:nil
-                                completion:^(NSString *reply, NSError *error) {
+            [[AIAPIClient shared] sendMessages:messages
+                                  systemPrompt:learnPrompt
+                                  styleProfile:nil
+                                  userProfile:nil
+                                    completion:^(NSString *reply, NSError *error) {
             if (error) {
                 NSLog(kAITweakLogPrefix "学习风格失败: %@", error);
                 finishLearning(@"学习失败",

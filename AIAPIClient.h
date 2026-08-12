@@ -8,6 +8,7 @@
 - (void)sendMessages:(NSArray<NSDictionary *> *)messages
          systemPrompt:(NSString *)systemPrompt
          styleProfile:(NSString *)styleProfile
+         userProfile:(NSString *)userProfile
           completion:(void (^)(NSString *reply, NSError *error))completion;
 
 @end

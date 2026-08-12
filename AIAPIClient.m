@@ -16,6 +16,7 @@
 - (void)sendMessages:(NSArray<NSDictionary *> *)messages
          systemPrompt:(NSString *)systemPrompt
          styleProfile:(NSString *)styleProfile
+         userProfile:(NSString *)userProfile
           completion:(void (^)(NSString *, NSError *))completion {
 
     NSURL *url = [NSURL URLWithString:[kAIBaseURL stringByAppendingString:@"/chat/completions"]];
@@ -36,6 +37,10 @@
     if (styleProfile.length > 0) {
         finalPrompt = [finalPrompt stringByAppendingFormat:
             @"\n\n【你与这位好友聊天时的风格档案，请严格按这个风格说话】\n%@", styleProfile];
+    }
+    if (userProfile.length > 0) {
+        finalPrompt = [finalPrompt stringByAppendingFormat:
+            @"\n\n【关于我的基本信息，聊天时以此为准，没写到的信息一律不要编造】\n%@", userProfile];
     }
     if (finalPrompt.length > 0) {
         [payload addObject:@{@"role": @"system", @"content": finalPrompt}];
