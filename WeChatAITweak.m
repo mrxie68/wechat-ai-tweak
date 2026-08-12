@@ -173,10 +173,27 @@ static BOOL g_hookSend = NO;
 @implementation WeChatAIHandler
 
 static NSMutableSet *g_inFlightChats = nil;
+static NSMutableSet *g_pendingChats = nil;
 static BOOL g_sendingReply = NO;
+static NSString *g_contextAccount = nil;
+
+// 账号隔离：检测到当前微信账号变化时清空全部上下文，避免把上一个账号的对话带过去
++ (void)syncContextAccount {
+    NSString *usrName = wechatSelfUsrName();
+    if (usrName.length == 0) return;
+    @synchronized (self) {
+        if (g_contextAccount && ![g_contextAccount isEqualToString:usrName]) {
+            NSLog(kAITweakLogPrefix "检测到微信账号切换，清空全部上下文");
+            [[AIContext shared] clearAll];
+        }
+        g_contextAccount = usrName;
+    }
+}
 
 + (void)handleIncomingMessage:(CMessageWrap *)wrap {
     @try {
+        [self syncContextAccount];
+
         if (![wrap isKindOfClass:NSClassFromString(@"CMessageWrap")]) return;
         if ([wrap m_uiMessageType] != 1) return; // 1 = 文本消息
 
@@ -240,7 +257,7 @@ static BOOL g_sendingReply = NO;
 
         // 自动模式：对方发消息 → 记入上下文 → 自动回复
         [[AIContext shared] appendUser:content chatId:chatId];
-        [self maybeAutoReplyInChat:chatId];
+        [self enqueueReplyForChat:chatId message:content];
     } @catch (NSException *exception) {
         NSLog(kAITweakLogPrefix "处理消息异常: %@", exception);
     }
@@ -253,8 +270,8 @@ static BOOL g_sendingReply = NO;
 
         // 命令：清空上下文
         if ([question isEqualToString:@"清空"] || [question isEqualToString:@"reset"]) {
-            [[AIContext shared] clearChat:chatId];
-            [self sendReply:@"✅ 上下文已清空" chatId:chatId];
+            [[AIContext shared] clearAll];
+            [self sendReply:@"✅ 已清空全部会话的上下文" chatId:chatId];
             return;
         }
 
@@ -292,12 +309,18 @@ static BOOL g_sendingReply = NO;
         // 记录用户消息 → 带上下文请求 AI
         [[AIContext shared] appendUser:content chatId:chatId];
         NSArray *history = [[AIContext shared] messagesForChat:chatId];
+        NSUInteger epoch = [[AIContext shared] epoch];
 
         [[AIAPIClient shared] sendMessages:history
                               systemPrompt:kAISystemPrompt
                                 completion:^(NSString *reply, NSError *error) {
             @synchronized (self) {
                 [g_inFlightChats removeObject:chatId];
+            }
+            // 清空后还在路上的回复直接丢弃，避免旧内容回流
+            if ([[AIContext shared] epoch] != epoch) {
+                NSLog(kAITweakLogPrefix "上下文已清空，丢弃本次回复");
+                return;
             }
             if (error) {
                 NSLog(kAITweakLogPrefix "AI 请求失败: %@", error);
@@ -312,16 +335,44 @@ static BOOL g_sendingReply = NO;
     }
 }
 
-+ (void)maybeAutoReplyInChat:(NSString *)chatId {
+// 自动模式入口：消息先进上下文；已在回复中时，问题挂起等待补回，闲聊合并跳过
++ (void)enqueueReplyForChat:(NSString *)chatId message:(NSString *)content {
     @synchronized (self) {
         if (!g_inFlightChats) g_inFlightChats = [NSMutableSet set];
+        if (!g_pendingChats) g_pendingChats = [NSMutableSet set];
         if ([g_inFlightChats containsObject:chatId]) {
-            // 已有回复在生成中，消息仍会进上下文，但不重复发起请求
+            if ([self looksLikeQuestion:content]) {
+                [g_pendingChats addObject:chatId];
+            }
             return;
         }
+    }
+    [self startAutoReplyForChat:chatId];
+}
+
+// 粗略判断是否像提问（决定回复期间要不要补回）
++ (BOOL)looksLikeQuestion:(NSString *)text {
+    if (text.length == 0) return NO;
+    if ([text containsString:@"？"] || [text containsString:@"?"]) return YES;
+    NSArray *keywords = @[@"吗", @"呢", @"么", @"什么", @"怎么", @"为啥", @"为什么",
+                          @"哪个", @"哪家", @"谁", @"多少", @"几点", @"要不要",
+                          @"能不能", @"行不行", @"可不可以", @"是不是"];
+    for (NSString *keyword in keywords) {
+        if ([text containsString:keyword]) return YES;
+    }
+    return NO;
+}
+
++ (void)startAutoReplyForChat:(NSString *)chatId {
+    @synchronized (self) {
+        if (!g_inFlightChats) g_inFlightChats = [NSMutableSet set];
+        if (!g_pendingChats) g_pendingChats = [NSMutableSet set];
+        if ([g_inFlightChats containsObject:chatId]) return;
         [g_inFlightChats addObject:chatId];
+        [g_pendingChats removeObject:chatId];
     }
 
+    NSUInteger epoch = [[AIContext shared] epoch];
     double delay = [AISettings replyDelay];
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{
@@ -329,27 +380,46 @@ static BOOL g_sendingReply = NO;
         [[AIAPIClient shared] sendMessages:history
                               systemPrompt:[AISettings autoSystemPrompt]
                                 completion:^(NSString *reply, NSError *error) {
+            @synchronized (self) {
+                [g_inFlightChats removeObject:chatId];
+            }
+            // 清空后还在路上的回复直接丢弃
+            if ([[AIContext shared] epoch] != epoch) {
+                NSLog(kAITweakLogPrefix "上下文已清空，丢弃本次自动回复");
+                return;
+            }
             if (error) {
-                @synchronized (self) {
-                    [g_inFlightChats removeObject:chatId];
-                }
                 NSLog(kAITweakLogPrefix "自动回复失败: %@", error);
                 [self sendReply:@"⚠️ AI 调用失败（请检查 API Key / 网络 / 余额）" chatId:chatId];
                 return;
             }
-            // 模拟打字：按字数算时间（0.2 秒/字，1~10 秒）+ 0~2 秒随机波动
-            double typing = MIN(MAX((double)reply.length * 0.2, 1.0), 10.0)
-                          + (double)(arc4random_uniform(20) / 10.0);
+            // 模拟打字：按字数算时间（0.15 秒/字，0.8~8 秒）+ 0~1.5 秒随机波动
+            double typing = MIN(MAX((double)reply.length * 0.15, 0.8), 8.0)
+                          + (double)(arc4random_uniform(15) / 10.0);
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(typing * NSEC_PER_SEC)),
                            dispatch_get_main_queue(), ^{
-                @synchronized (self) {
-                    [g_inFlightChats removeObject:chatId];
-                }
                 // 回复发出后，收消息回显会把它记进上下文
                 [self sendReply:reply chatId:chatId];
+                // 回复期间收到的问题：补回一条
+                [self checkPendingForChat:chatId];
             });
         }];
     });
+}
+
+// 当前回复已发出，看看回复期间有没有挂起的问题
++ (void)checkPendingForChat:(NSString *)chatId {
+    BOOL pending = NO;
+    @synchronized (self) {
+        if (g_pendingChats && [g_pendingChats containsObject:chatId]) {
+            [g_pendingChats removeObject:chatId];
+            pending = YES;
+        }
+    }
+    if (pending) {
+        NSLog(kAITweakLogPrefix "回复期间收到新问题，补回一条 (%@)", chatId);
+        [self startAutoReplyForChat:chatId];
+    }
 }
 
 // 收消息链路里的命令兜底：自己发的 @AI 命令也识别；返回 YES 表示是命令
@@ -387,8 +457,8 @@ static BOOL g_sendingReply = NO;
             [top presentViewController:nav animated:YES completion:nil];
         });
     } else if ([command isEqualToString:@"clear"]) {
-        [[AIContext shared] clearChat:chatId];
-        [self sendReply:@"✅ 上下文已清空" chatId:chatId];
+        [[AIContext shared] clearAll];
+        [self sendReply:@"✅ 已清空全部会话的上下文" chatId:chatId];
     } else if ([command isEqualToString:@"test"]) {
         // 本地链路测试：不调用 API。弹窗 = 收消息正常；消息回复 = 发送正常
         [self presentAlertWithTitle:@"链路测试"

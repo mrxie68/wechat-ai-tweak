@@ -42,8 +42,15 @@ static NSString * const kAISettingsReplyDelayKey = @"WeChatAIReplyDelay";
 }
 
 + (NSString *)model {
-    NSString *stored = [[NSUserDefaults standardUserDefaults] stringForKey:kAISettingsModelKey];
-    if (stored.length > 0) return stored;
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    NSString *stored = [defaults stringForKey:kAISettingsModelKey];
+    if (stored.length > 0) {
+        // 旧模型名已弃用：清掉旧值，回落到新默认
+        if (![stored isEqualToString:@"deepseek-chat"] && ![stored isEqualToString:@"deepseek-reasoner"]) {
+            return stored;
+        }
+        [defaults removeObjectForKey:kAISettingsModelKey];
+    }
     return kAIModel;
 }
 

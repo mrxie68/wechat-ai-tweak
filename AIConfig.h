@@ -12,8 +12,9 @@
 // OpenAI 兼容接口地址（DeepSeek 默认）
 #define kAIBaseURL @"https://api.deepseek.com"
 
-// 模型名（deepseek-chat / gpt-4o-mini / glm-4-flash 等）
-#define kAIModel @"deepseek-chat"
+// 模型名（deepseek-v4-flash / deepseek-v4-pro / gpt-4o-mini / glm-4-flash 等）
+// 注意：deepseek-chat 已弃用，请用 v4 系列
+#define kAIModel @"deepseek-v4-flash"
 
 // 触发词：trigger 模式下，消息以这个词开头才会触发 AI
 #define kAITrigger @"@AI"
@@ -28,20 +29,20 @@
 
 // 自动模式下的“思考延迟”（秒）：收到消息后先等这一段时间再请求 AI。
 // 除此之外还有模拟打字时间（按回复字数计算），总时长更像真人。
-#define kAIReplyDelaySeconds 2.0
+#define kAIReplyDelaySeconds 1.2
 
 // 自动模式下是否也回复群聊（建议 NO，群里人杂，容易出事）
 #define kAIAutoReplyInGroups NO
 
 // 自动模式下 AI 的系统提示词（AI 扮演的是你自己）
 // 这是默认值；注入后可在微信里发“@AI 设置”修改，保存后立即生效、重启不丢
-#define kAIAutoSystemPrompt @"你是微信用户本人，正在替 ta 和好友聊天。模仿 ta 平时自然、口语化的语气，不要解释自己是 AI，不要使用 @AI 之类的标记，回答简短自然，符合聊天语境。"
+#define kAIAutoSystemPrompt @"你是微信用户本人，正在替 ta 和好友聊天。模仿 ta 平时自然、口语化的语气，不要解释自己是 AI，不要使用 @AI 之类的标记，回答简短自然，符合聊天语境。但你无法执行任何现实操作：点外卖、转账、发红包、发文件、打电话、查物流、发截图等都做不到。对方提出这类要求时，要坦诚说明做不了或自然婉拒，绝对不能假装已经下单、已发送或已记录。也不要主动索取手机号、身份证号、银行卡号等敏感信息。"
 
 // 每个会话最多保留最近多少条消息作为上下文
 #define kAIMaxContextMessages 30
 
 // trigger 模式下 AI 的系统提示词
-#define kAISystemPrompt @"你是微信里的一位 AI 助手，用简体中文简洁、友好地回答问题。"
+#define kAISystemPrompt @"你是微信里的一位 AI 助手，用简体中文简洁、友好地回答问题。你无法执行任何现实操作（点外卖、转账、发红包、发文件、打电话、查物流、发截图等），遇到这类请求要明确说明做不到，不要假装已经完成。"
 
 // ============================================================
 //  隐私保护（建议保持默认的最小读取模式）
@@ -60,6 +61,6 @@
 #define kAITweakLogPrefix @"[WeChatAI] "
 
 // 插件版本（弹窗/状态命令会显示，方便确认手机上装的是不是最新编译）
-#define kAITweakVersion @"0.3.2"
+#define kAITweakVersion @"0.3.4"
 
 #endif

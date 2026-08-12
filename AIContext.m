@@ -5,7 +5,9 @@
 @property (nonatomic, strong) NSMutableDictionary<NSString *, NSMutableArray<NSDictionary *> *> *histories;
 @end
 
-@implementation AIContext
+@implementation AIContext {
+    NSUInteger _epoch;
+}
 
 + (instancetype)shared {
     static AIContext *instance = nil;
@@ -56,6 +58,20 @@
 - (void)clearChat:(NSString *)chatId {
     @synchronized (self.histories) {
         [self.histories removeObjectForKey:chatId];
+        _epoch++;
+    }
+}
+
+- (void)clearAll {
+    @synchronized (self.histories) {
+        [self.histories removeAllObjects];
+        _epoch++;
+    }
+}
+
+- (NSUInteger)epoch {
+    @synchronized (self.histories) {
+        return _epoch;
     }
 }
 

@@ -94,7 +94,7 @@ static UITextField *makeRowField(NSString *placeholder) {
     [self.view addSubview:self.modelCard];
     self.modelLabel = makeRowLabel(@"模型名");
     [self.modelCard addSubview:self.modelLabel];
-    self.modelField = makeRowField(@"deepseek-chat");
+    self.modelField = makeRowField(@"deepseek-v4-flash");
     self.modelField.text = [AISettings model];
     [self.modelCard addSubview:self.modelField];
 

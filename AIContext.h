@@ -11,5 +11,7 @@
 - (void)appendUser:(NSString *)text chatId:(NSString *)chatId;
 - (void)appendAssistant:(NSString *)text chatId:(NSString *)chatId;
 - (void)clearChat:(NSString *)chatId;
+- (void)clearAll;
+- (NSUInteger)epoch;   // 清空次数，用于丢弃清空时还在路上的回复
 
 @end
