@@ -1,0 +1,9 @@
+Package: com.wechat.ai
+Name: WeChat AI Assistant
+Version: 0.1.0
+Architecture: iphoneos-arm
+Description: 微信 AI 自动回复插件（上下文记忆）
+Maintainer: WeChat AI
+Author: WeChat AI
+Section: Tweaks
+Depends: mobilesubstrate
