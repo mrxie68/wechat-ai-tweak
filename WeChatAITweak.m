@@ -1047,8 +1047,8 @@ static void installChatInfoRowHooks(void) {
     };
 
     if (addContactCls) {
-        method = class_getInstanceMethod(addContactCls, @selector(reloadTableData));
-        if (method) {
+        if (classDefines(addContactCls, @selector(reloadTableData))) {
+            method = class_getInstanceMethod(addContactCls, @selector(reloadTableData));
             orig_reloadTableData_addContact = (void *)method_getImplementation(method);
             method_setImplementation(method, (IMP)swz_reloadTableData);
         }
@@ -1064,8 +1064,8 @@ static void installChatInfoRowHooks(void) {
         }
     }
     if (chatRoomCls) {
-        method = class_getInstanceMethod(chatRoomCls, @selector(reloadTableData));
-        if (method) {
+        if (classDefines(chatRoomCls, @selector(reloadTableData))) {
+            method = class_getInstanceMethod(chatRoomCls, @selector(reloadTableData));
             orig_reloadTableData_chatRoom = (void *)method_getImplementation(method);
             method_setImplementation(method, (IMP)swz_reloadTableData);
         }

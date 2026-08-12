@@ -43,6 +43,8 @@
 @property (nonatomic, strong) UIButton *resetButton;
 @property (nonatomic, strong) NSString *apiKeyReal;   // 当前真实 API Key（界面只显示掩码）
 @property (nonatomic) BOOL editingKey;               // 用户正在编辑 Key（编辑时才显示明文）
+@property (nonatomic, strong) NSString *pendingModel; // 页面里选中的模型（保存时才落盘）
+@property (nonatomic, strong) NSString *pendingMode;  // 页面里选中的回复模式（保存时才落盘）
 @end
 
 @implementation AIPromptEditorViewController
@@ -141,6 +143,7 @@ static UITextField *makeRowField(NSString *placeholder) {
     self.modeLabel = makeRowLabel(@"回复模式");
     [self.modeCard addSubview:self.modeLabel];
     self.modeValueLabel = makeValueLabel();
+    self.pendingMode = [AISettings replyMode];
     [self refreshModeLabel];
     [self.modeCard addSubview:self.modeValueLabel];
     self.modeCard.userInteractionEnabled = YES;
@@ -165,6 +168,7 @@ static UITextField *makeRowField(NSString *placeholder) {
     self.modelLabel = makeRowLabel(@"模型名");
     [self.modelCard addSubview:self.modelLabel];
     self.modelValueLabel = makeValueLabel();
+    self.pendingModel = [AISettings model];
     [self refreshModelLabel];
     [self.modelCard addSubview:self.modelValueLabel];
     self.modelCard.userInteractionEnabled = YES;
@@ -334,11 +338,11 @@ static UITextField *makeRowField(NSString *placeholder) {
 }
 
 - (void)refreshModelLabel {
-    self.modelValueLabel.text = [NSString stringWithFormat:@"%@ ›", [AISettings model]];
+    self.modelValueLabel.text = [NSString stringWithFormat:@"%@ ›", self.pendingModel];
 }
 
 - (void)refreshModeLabel {
-    self.modeValueLabel.text = [[AISettings replyMode] isEqualToString:@"auto"]
+    self.modeValueLabel.text = [self.pendingMode isEqualToString:@"auto"]
         ? @"自动代替聊天" : @"手动 @AI 触发";
 }
 
@@ -360,13 +364,13 @@ static UITextField *makeRowField(NSString *placeholder) {
     [sheet addAction:[UIAlertAction actionWithTitle:@"自动代替聊天（推荐）"
                                              style:UIAlertActionStyleDefault
                                            handler:^(UIAlertAction *action) {
-        [AISettings setReplyMode:@"auto"];
+        self.pendingMode = @"auto";
         [self refreshModeLabel];
     }]];
     [sheet addAction:[UIAlertAction actionWithTitle:@"手动触发（@AI 开头才回）"
                                              style:UIAlertActionStyleDefault
                                            handler:^(UIAlertAction *action) {
-        [AISettings setReplyMode:@"trigger"];
+        self.pendingMode = @"trigger";
         [self refreshModeLabel];
     }]];
     [sheet addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
@@ -404,7 +408,7 @@ static UITextField *makeRowField(NSString *placeholder) {
         [sheet addAction:[UIAlertAction actionWithTitle:modelName
                                                  style:UIAlertActionStyleDefault
                                                handler:^(UIAlertAction *action) {
-            [AISettings setModel:modelName];
+            self.pendingModel = modelName;
             [self refreshModelLabel];
         }]];
     }
@@ -437,7 +441,7 @@ static UITextField *makeRowField(NSString *placeholder) {
         NSString *name = [alert.textFields.firstObject.text
                           stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
         if (name.length > 0) {
-            [AISettings setModel:name];
+            self.pendingModel = name;
             [self refreshModelLabel];
         }
     }]];
@@ -496,6 +500,8 @@ static UITextField *makeRowField(NSString *placeholder) {
     NSString *key = self.editingKey ? self.apiKeyField.text : self.apiKeyReal;
     [AISettings setEnabled:self.enabledSwitch.on];
     [AISettings setApiKey:key];
+    [AISettings setModel:self.pendingModel];
+    [AISettings setReplyMode:self.pendingMode];
     double delay = [self.delayField.text doubleValue];
     [AISettings setReplyDelay:(delay > 0 && delay <= 30) ? delay : kAIReplyDelaySeconds];
     [AISettings setAutoSystemPrompt:self.textView.text];
@@ -508,9 +514,9 @@ static UITextField *makeRowField(NSString *placeholder) {
     self.apiKeyReal = kAIAPIKey;
     self.apiKeyField.text = [self maskedKey:kAIAPIKey];
     self.editingKey = NO;
-    [AISettings setModel:kAIModel];
+    self.pendingModel = kAIModel;
     [self refreshModelLabel];
-    [AISettings setReplyMode:kAIReplyMode];
+    self.pendingMode = kAIReplyMode;
     [self refreshModeLabel];
     self.delayField.text = [NSString stringWithFormat:@"%.1f", kAIReplyDelaySeconds];
     self.textView.text = kAIAutoSystemPrompt;
