@@ -48,6 +48,12 @@
 + (id)getCurUsrName;
 @end
 
+// wcplugins（插件管理/收纳）的注册接口
+@interface WCPluginsMgr : NSObject
++ (instancetype)sharedInstance;
+- (void)registerSwitchWithTitle:(NSString *)title key:(NSString *)key;
+@end
+
 // 辅助：递归查找 UITableView
 @interface AIDiagnostics : NSObject
 + (UITableView *)findTableViewInView:(UIView *)view;
@@ -169,6 +175,9 @@ static UIViewController *tweakTopViewController(void) {
 static BOOL g_hookAsync = NO;
 static BOOL g_hookExt = NO;
 static BOOL g_hookSend = NO;
+// wcplugins 插件管理（收纳）注册状态
+static BOOL g_wcpluginsClassFound = NO;
+static BOOL g_wcpluginsRegistered = NO;
 
 #pragma mark - 核心逻辑
 
@@ -533,6 +542,7 @@ static void *kAISwitchChatKey = &kAISwitchChatKey;  // 开关 -> chatId
         g_hookAsync ? @"✓" : @"✗",
         g_hookExt ? @"✓" : @"✗",
         g_hookSend ? @"✓" : @"✗",
+        g_wcpluginsClassFound ? (g_wcpluginsRegistered ? @"wcplugins ✓ 已注册" : @"wcplugins ✗ 未注册成功") : @"未装 wcplugins",
         keyMasked, whiteDesc];
 }
 
@@ -1008,6 +1018,31 @@ static void retryInstall(int remaining) {
     });
 }
 
+// 注册到 wcplugins 插件管理：让“我的 → 插件页面”出现我们的开关
+static void registerWithWCPlugins(int remaining) {
+    Class mgrClass = NSClassFromString(@"WCPluginsMgr");
+    if (mgrClass && [mgrClass respondsToSelector:@selector(sharedInstance)]) {
+        g_wcpluginsClassFound = YES;
+        id mgr = [mgrClass sharedInstance];
+        if (mgr && [mgr respondsToSelector:@selector(registerSwitchWithTitle:key:)]) {
+            // 预置默认值，让 wcplugins 的开关状态和插件内置默认（开）保持一致
+            [[NSUserDefaults standardUserDefaults] registerDefaults:@{@"WeChatAIEnabled" : @YES}];
+            [mgr registerSwitchWithTitle:@"微信 AI 助手" key:@"WeChatAIEnabled"];
+            g_wcpluginsRegistered = YES;
+            NSLog(kAITweakLogPrefix "已注册到 wcplugins 插件管理");
+            return;
+        }
+    }
+    if (g_wcpluginsRegistered || remaining <= 0) {
+        NSLog(kAITweakLogPrefix "未找到 WCPluginsMgr，跳过 wcplugins 适配");
+        return;
+    }
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        registerWithWCPlugins(remaining - 1);
+    });
+}
+
 __attribute__((constructor))
 static void WeChatAIInit(void) {
     NSLog(kAITweakLogPrefix "插件已加载，等待微信初始化…");
@@ -1020,10 +1055,12 @@ static void WeChatAIInit(void) {
                                                        queue:nil
                                                   usingBlock:^(NSNotification *note) {
         retryInstall(10);
+        registerWithWCPlugins(10);
     }];
 
     // 兜底：如果通知已经发过，直接靠延时重试
     retryInstall(10);
+    registerWithWCPlugins(10);
 }
 
 // ============================================================
