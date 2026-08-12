@@ -343,8 +343,11 @@ static UITextField *makeRowField(NSString *placeholder) {
 }
 
 - (void)statusTapped {
+    NSString *statusText = [WeChatAIHandler statusString];
+    // 完整内容自动复制到剪贴板，弹窗太长被截断时也能直接粘贴发出来
+    [[UIPasteboard generalPasteboard] setString:statusText];
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"微信 AI 状态"
-                                                                   message:[WeChatAIHandler statusString]
+                                                                   message:[statusText stringByAppendingString:@"\n\n（完整内容已复制到剪贴板，直接粘贴发我）"]
                                                             preferredStyle:UIAlertControllerStyleAlert];
     [alert addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
     [self presentViewController:alert animated:YES completion:nil];
