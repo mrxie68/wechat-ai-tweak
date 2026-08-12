@@ -160,17 +160,21 @@ static BOOL g_sendingReply = NO;
         // 新旧收消息 hook 可能同时触发，去重
         if (isDuplicateMessage(wrap)) return;
 
-        // 群聊会话 id 是 toUsr（@chatroom 结尾），单聊用 fromUsr
+        // 判断是不是自己发的消息（文件助手/多端同步的回显）
+        NSString *selfUsr = wechatSelfUsrName();
+        BOOL isSelf = (selfUsr.length > 0 && [fromUsr isEqualToString:selfUsr]);
+
+        // 会话 id：
+        //   自己发的消息 → 发给谁就是哪个会话（文件助手用 toUsr=filehelper）
+        //   群聊 → toUsr（@chatroom 结尾）
+        //   别人单聊 → fromUsr（对方 wxid）
         BOOL isGroup = [toUsr containsString:@"@chatroom"];
-        NSString *chatId = isGroup ? toUsr : fromUsr;
+        NSString *chatId = isSelf ? toUsr : (isGroup ? toUsr : fromUsr);
 
         // 白名单过滤：不在白名单里的会话直接忽略（不读取内容）
         if (!isChatAllowed(chatId)) return;
 
-        // 自己发的消息：本机发送由 SendTextMessage hook 记录上下文；
-        // 这里兜底识别 @AI 命令（部分微信版本发送 hook 不生效）
-        NSString *selfUsr = wechatSelfUsrName();
-        BOOL isSelf = (selfUsr.length > 0 && [fromUsr isEqualToString:selfUsr]);
+        // 自己发的消息：兜底识别 @AI 命令（部分微信版本发送 hook 不生效）
         if (isSelf) {
             [self handlePossibleCommand:content chatId:chatId];
             return;
@@ -323,6 +327,7 @@ static BOOL g_sendingReply = NO;
     if ([question isEqualToString:@"设置"] || [question isEqualToString:@"settings"]) return @"settings";
     if ([question isEqualToString:@"清空"] || [question isEqualToString:@"reset"]) return @"clear";
     if ([question isEqualToString:@"测试"] || [question isEqualToString:@"test"]) return @"test";
+    if ([question isEqualToString:@"状态"] || [question isEqualToString:@"status"]) return @"status";
     return nil;
 }
 
@@ -344,7 +349,35 @@ static BOOL g_sendingReply = NO;
     } else if ([command isEqualToString:@"test"]) {
         // 本地链路测试：不调用 API，能收到并回这条就说明收/发 hook 都正常
         [self sendReply:@"✅ 收到，插件链路正常（本地测试，未调用 API）" chatId:chatId];
+    } else if ([command isEqualToString:@"status"]) {
+        [self sendStatusReply:chatId];
     }
+}
+
++ (void)sendStatusReply:(NSString *)chatId {
+    NSString *mode = isAutoMode() ? @"auto（自动代替聊天）" : @"trigger（@AI 触发）";
+
+    NSString *keyMasked = @"未填/过短";
+    if (kAIAPIKey.length >= 10) {
+        keyMasked = [NSString stringWithFormat:@"%@…%@（%lu位）",
+                     [kAIAPIKey substringToIndex:6],
+                     [kAIAPIKey substringFromIndex:kAIAPIKey.length - 4],
+                     (unsigned long)kAIAPIKey.length];
+    }
+
+    NSString *whiteRaw = [kAIAllowedChats stringByTrimmingCharactersInSet:
+                          [NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    NSString *whiteDesc = whiteRaw.length == 0 ? @"全部会话" : whiteRaw;
+
+    NSString *status = [NSString stringWithFormat:
+        @"🤖 微信 AI v%@\n模式：%@\nhook：收消息Async %@ / 收消息Ext %@ / 发送 %@\nAPI Key：%@\n白名单：%@",
+        kAITweakVersion, mode,
+        g_hookAsync ? @"✓" : @"✗",
+        g_hookExt ? @"✓" : @"✗",
+        g_hookSend ? @"✓" : @"✗",
+        keyMasked, whiteDesc];
+
+    [self sendReply:status chatId:chatId];
 }
 
 + (void)sendReply:(NSString *)text chatId:(NSString *)chatId {
@@ -380,6 +413,9 @@ static BOOL g_sendingReply = NO;
 static void (*orig_AsyncOnAddMsg)(id, SEL, id, CMessageWrap *);
 static void (*orig_MainThreadNotifyToExt)(id, SEL, NSDictionary *);
 static void (*orig_SendTextMessage)(id, SEL, NSString *, NSString *);
+static BOOL g_hookAsync = NO;
+static BOOL g_hookExt = NO;
+static BOOL g_hookSend = NO;
 
 static void swz_AsyncOnAddMsg(id self, SEL _cmd, id arg1, CMessageWrap *wrap) {
     if (orig_AsyncOnAddMsg) {
@@ -439,20 +475,22 @@ static int installHooks(void) {
     if (recvMethod) {
         orig_AsyncOnAddMsg = (void *)method_getImplementation(recvMethod);
         method_setImplementation(recvMethod, (IMP)swz_AsyncOnAddMsg);
+        g_hookAsync = YES;
         NSLog(kAITweakLogPrefix "hook 安装成功: AsyncOnAddMsg:MsgWrap:");
 
         // 首次加载弹一次提示，方便确认注入是否成功
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)),
                        dispatch_get_main_queue(), ^{
             NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
-            if ([defaults boolForKey:@"WeChatAIWelcomeShown"]) return;
-            [defaults setBool:YES forKey:@"WeChatAIWelcomeShown"];
+            NSString *shownVersion = [defaults stringForKey:@"WeChatAIWelcomeVersion"];
+            if ([shownVersion isEqualToString:kAITweakVersion]) return;
+            [defaults setObject:kAITweakVersion forKey:@"WeChatAIWelcomeVersion"];
             [defaults synchronize];
 
             UIViewController *top = tweakTopViewController();
             if (!top) return;
             UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"微信 AI 助手已加载"
-                message:@"给自己发 @AI 设置 可打开配置页；自动模式下对方发消息即可自动回复。"
+                message:[NSString stringWithFormat:@"v%@ 已加载\n发 @AI 设置 配置提示词；发 @AI 状态 查看运行状态。", kAITweakVersion]
                 preferredStyle:UIAlertControllerStyleAlert];
             [alert addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
             [top presentViewController:alert animated:YES completion:nil];
@@ -466,6 +504,7 @@ static int installHooks(void) {
     if (extMethod) {
         orig_MainThreadNotifyToExt = (void *)method_getImplementation(extMethod);
         method_setImplementation(extMethod, (IMP)swz_MainThreadNotifyToExt);
+        g_hookExt = YES;
         NSLog(kAITweakLogPrefix "hook 安装成功: MainThreadNotifyToExt:");
     } else {
         NSLog(kAITweakLogPrefix "没有找到 MainThreadNotifyToExt:，只走 AsyncOnAddMsg 收消息");
@@ -475,6 +514,7 @@ static int installHooks(void) {
     if (sendMethod) {
         orig_SendTextMessage = (void *)method_getImplementation(sendMethod);
         method_setImplementation(sendMethod, (IMP)swz_SendTextMessage);
+        g_hookSend = YES;
         NSLog(kAITweakLogPrefix "hook 安装成功: SendTextMessage:toUsrName:");
     } else {
         NSLog(kAITweakLogPrefix "没有找到 SendTextMessage:toUsrName:，本机发送记录将不可用");
