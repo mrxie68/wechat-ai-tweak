@@ -48,16 +48,9 @@
 + (id)getCurUsrName;
 @end
 
-// 界面诊断（临时功能）：识别聊天信息页类名
+// 辅助：递归查找 UITableView
 @interface AIDiagnostics : NSObject
-+ (void)inspectViewController:(UIViewController *)viewController;
 + (UITableView *)findTableViewInView:(UIView *)view;
-@end
-
-// 微信原生 cell 工厂（运行时存在，头文件不完整，这里补声明）
-@interface WCTableViewNormalCellManager : NSObject
-+ (id)normalCellForSel:(SEL)sel target:(id)target title:(NSString *)title accessoryType:(long long)accessoryType;
-- (void)configureCell:(UITableViewCell *)cell;
 @end
 
 @interface CContact : NSObject
@@ -701,32 +694,6 @@ static void swz_SendTextMessage(id self, SEL _cmd, NSString *content, NSString *
     }
 }
 
-// ---- 界面诊断（临时）：定位没出开关行的单聊页面 ----
-static void (*orig_pushViewController)(id, SEL, UIViewController *, BOOL);
-static void (*orig_presentViewController)(id, SEL, UIViewController *, BOOL, void (^)(void));
-
-static void swz_pushViewController(id self, SEL _cmd, UIViewController *viewController, BOOL animated) {
-    if (orig_pushViewController) {
-        orig_pushViewController(self, _cmd, viewController, animated);
-    }
-    @try {
-        [AIDiagnostics inspectViewController:viewController];
-    } @catch (NSException *exception) {
-        NSLog(kAITweakLogPrefix "界面诊断异常: %@", exception);
-    }
-}
-
-static void swz_presentViewController(id self, SEL _cmd, UIViewController *viewController, BOOL animated, void (^completion)(void)) {
-    if (orig_presentViewController) {
-        orig_presentViewController(self, _cmd, viewController, animated, completion);
-    }
-    @try {
-        [AIDiagnostics inspectViewController:viewController];
-    } @catch (NSException *exception) {
-        NSLog(kAITweakLogPrefix "界面诊断异常: %@", exception);
-    }
-}
-
 // ============================================================
 //  聊天信息页插入“AI 助手”开关行（8.0.55 适配）
 //  dataSource 是 MMTableViewInfo，直接在表格数据源层面插行
@@ -799,26 +766,23 @@ static NSDictionary *aiConfigForTable(UITableView *tableView) {
     return config;
 }
 
-// 用微信原生样式创建开关行；失败回退到普通样式
+// 用微信的 MMTableViewCell 创建开关行，样式尽量贴近原生
 static UITableViewCell *aiMakeSwitchCell(BOOL on, NSString *chatId) {
     UITableViewCell *cell = nil;
     @try {
-        Class managerClass = NSClassFromString(@"WCTableViewNormalCellManager");
-        if (managerClass && [managerClass respondsToSelector:@selector(normalCellForSel:target:title:accessoryType:)]) {
-            id manager = [managerClass normalCellForSel:NULL target:nil title:@"AI 助手" accessoryType:0];
-            cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:@"WeChatAICell"];
-            if (manager && [manager respondsToSelector:@selector(configureCell:)]) {
-                [manager configureCell:cell];
-            }
-        }
+        Class cellClass = NSClassFromString(@"MMTableViewCell");
+        cell = [[cellClass alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:@"WeChatAICell"];
     } @catch (NSException *exception) {
         cell = nil;
     }
     if (!cell) {
         cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:@"WeChatAICell"];
-        cell.textLabel.text = @"AI 助手";
-        cell.textLabel.font = [UIFont systemFontOfSize:16];
     }
+    cell.textLabel.text = @"AI 助手";
+    cell.textLabel.font = [UIFont systemFontOfSize:17];
+    cell.textLabel.textColor = [UIColor labelColor];
+    cell.backgroundColor = [UIColor whiteColor];
+    cell.contentView.backgroundColor = [UIColor whiteColor];
     UISwitch *switchView = [[UISwitch alloc] initWithFrame:CGRectZero];
     switchView.on = on;
     objc_setAssociatedObject(switchView, &kAISwitchChatKey, chatId, OBJC_ASSOCIATION_COPY_NONATOMIC);
@@ -1026,20 +990,6 @@ static int installHooks(void) {
         NSLog(kAITweakLogPrefix "hook 安装成功: SendTextMessage:toUsrName:");
     } else {
         NSLog(kAITweakLogPrefix "没有找到 SendTextMessage:toUsrName:，本机发送记录将不可用");
-    }
-
-    // 界面诊断（临时）
-    Method pushMethod = class_getInstanceMethod([UINavigationController class],
-                                                @selector(pushViewController:animated:));
-    if (pushMethod) {
-        orig_pushViewController = (void *)method_getImplementation(pushMethod);
-        method_setImplementation(pushMethod, (IMP)swz_pushViewController);
-    }
-    Method presentMethod = class_getInstanceMethod([UIViewController class],
-                                                   @selector(presentViewController:animated:completion:));
-    if (presentMethod) {
-        orig_presentViewController = (void *)method_getImplementation(presentMethod);
-        method_setImplementation(presentMethod, (IMP)swz_presentViewController);
     }
 
     // 聊天信息页插入“AI 助手”开关行
