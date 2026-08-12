@@ -1,5 +1,6 @@
 #import "AIAPIClient.h"
 #import "AIConfig.h"
+#import "AISettings.h"
 
 @implementation AIAPIClient
 
@@ -20,7 +21,7 @@
     NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:url];
     request.HTTPMethod = @"POST";
     [request setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
-    [request setValue:[NSString stringWithFormat:@"Bearer %@", kAIAPIKey] forHTTPHeaderField:@"Authorization"];
+    [request setValue:[NSString stringWithFormat:@"Bearer %@", [AISettings apiKey]] forHTTPHeaderField:@"Authorization"];
     [request setTimeoutInterval:60];
 
     // 系统提示词 + 会话历史
@@ -31,7 +32,7 @@
     [payload addObjectsFromArray:messages];
 
     NSDictionary *body = @{
-        @"model": kAIModel,
+        @"model": [AISettings model],
         @"messages": payload,
         @"temperature": @0.7
     };

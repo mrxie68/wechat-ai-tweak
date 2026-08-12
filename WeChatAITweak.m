@@ -201,9 +201,11 @@ static BOOL g_sendingReply = NO;
         // 白名单过滤：不在白名单里的会话直接忽略（不读取内容）
         if (!isChatAllowed(chatId)) return;
 
-        // 自己发的消息：兜底识别 @AI 命令（部分微信版本发送 hook 不生效）
+        // 自己发的消息：先识别 @AI 命令；不是命令则记进上下文（8.0.5x 没有发送 hook，靠回显记录）
         if (isSelf) {
-            [self handlePossibleCommand:content chatId:chatId];
+            if (![self handlePossibleCommand:content chatId:chatId] && isAutoMode()) {
+                [[AIContext shared] appendAssistant:content chatId:chatId];
+            }
             return;
         }
 
@@ -336,24 +338,14 @@ static BOOL g_sendingReply = NO;
     });
 }
 
-+ (void)recordSentMessage:(NSString *)content chatId:(NSString *)chatId {
-    @try {
-        if (content.length == 0 || chatId.length == 0) return;
-        if (!isChatAllowed(chatId)) return;
-        if (!isAutoMode()) return;
-        // 自己发出的消息（手动发的和 AI 回复）都算“我”这一侧
-        [[AIContext shared] appendAssistant:content chatId:chatId];
-    } @catch (NSException *exception) {
-        NSLog(kAITweakLogPrefix "记录发送消息异常: %@", exception);
-    }
-}
-
-// 收消息链路里的命令兜底：自己发的 @AI 命令也识别
-+ (void)handlePossibleCommand:(NSString *)content chatId:(NSString *)chatId {
+// 收消息链路里的命令兜底：自己发的 @AI 命令也识别；返回 YES 表示是命令
++ (BOOL)handlePossibleCommand:(NSString *)content chatId:(NSString *)chatId {
     NSString *command = [self commandFromContent:content];
     if (command) {
         [self handleCommand:command chatId:chatId];
+        return YES;
     }
+    return NO;
 }
 
 // 自己手动发送的命令：@AI 设置 / @AI 清空
@@ -397,12 +389,13 @@ static BOOL g_sendingReply = NO;
 + (NSString *)statusString {
     NSString *mode = isAutoMode() ? @"auto（自动代替聊天）" : @"trigger（@AI 触发）";
 
+    NSString *activeKey = [AISettings apiKey];
     NSString *keyMasked = @"未填/过短";
-    if (kAIAPIKey.length >= 10) {
+    if (activeKey.length >= 10) {
         keyMasked = [NSString stringWithFormat:@"%@…%@（%lu位）",
-                     [kAIAPIKey substringToIndex:6],
-                     [kAIAPIKey substringFromIndex:kAIAPIKey.length - 4],
-                     (unsigned long)kAIAPIKey.length];
+                     [activeKey substringToIndex:6],
+                     [activeKey substringFromIndex:activeKey.length - 4],
+                     (unsigned long)activeKey.length];
     }
 
     NSString *whiteRaw = [kAIAllowedChats stringByTrimmingCharactersInSet:
@@ -410,8 +403,8 @@ static BOOL g_sendingReply = NO;
     NSString *whiteDesc = whiteRaw.length == 0 ? @"全部会话" : whiteRaw;
 
     return [NSString stringWithFormat:
-        @"🤖 微信 AI v%@\n模式：%@\nhook：收消息Async %@ / 收消息Ext %@ / 发送 %@\nAPI Key：%@\n白名单：%@",
-        kAITweakVersion, mode,
+        @"🤖 微信 AI v%@\n模式：%@\n模型：%@\nhook：收消息Async %@ / 收消息Ext %@ / 发送 %@\nAPI Key：%@\n白名单：%@",
+        kAITweakVersion, mode, [AISettings model],
         g_hookAsync ? @"✓" : @"✗",
         g_hookExt ? @"✓" : @"✗",
         g_hookSend ? @"✓" : @"✗",
@@ -558,7 +551,6 @@ static void swz_SendTextMessage(id self, SEL _cmd, NSString *content, NSString *
     if (orig_SendTextMessage) {
         orig_SendTextMessage(self, _cmd, content, usrName);
     }
-    [WeChatAIHandler recordSentMessage:content chatId:usrName];
 }
 
 static BOOL g_hooksInstalled = NO;

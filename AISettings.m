@@ -2,6 +2,8 @@
 #import "AIConfig.h"
 
 static NSString * const kAISettingsAutoPromptKey = @"WeChatAIAutoSystemPrompt";
+static NSString * const kAISettingsAPIKeyKey = @"WeChatAIAPIKey";
+static NSString * const kAISettingsModelKey = @"WeChatAIModel";
 
 @implementation AISettings
 
@@ -17,6 +19,38 @@ static NSString * const kAISettingsAutoPromptKey = @"WeChatAIAutoSystemPrompt";
         [defaults setObject:prompt forKey:kAISettingsAutoPromptKey];
     } else {
         [defaults removeObjectForKey:kAISettingsAutoPromptKey];
+    }
+    [defaults synchronize];
+}
+
++ (NSString *)apiKey {
+    NSString *stored = [[NSUserDefaults standardUserDefaults] stringForKey:kAISettingsAPIKeyKey];
+    if (stored.length > 0) return stored;
+    return kAIAPIKey;
+}
+
++ (void)setApiKey:(NSString *)key {
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    if (key.length > 0) {
+        [defaults setObject:key forKey:kAISettingsAPIKeyKey];
+    } else {
+        [defaults removeObjectForKey:kAISettingsAPIKeyKey];
+    }
+    [defaults synchronize];
+}
+
++ (NSString *)model {
+    NSString *stored = [[NSUserDefaults standardUserDefaults] stringForKey:kAISettingsModelKey];
+    if (stored.length > 0) return stored;
+    return kAIModel;
+}
+
++ (void)setModel:(NSString *)model {
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    if (model.length > 0) {
+        [defaults setObject:model forKey:kAISettingsModelKey];
+    } else {
+        [defaults removeObjectForKey:kAISettingsModelKey];
     }
     [defaults synchronize];
 }
