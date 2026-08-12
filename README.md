@@ -48,6 +48,7 @@
 - **状态查询**：发 `@AI 状态`（文件助手即可），会**弹窗**显示插件版本、模式、三个 hook 是否安装成功、API Key 掩码和长度、白名单——不依赖发送链路，排查时把弹窗内容发给我。
 - 每次更新 dylib 重新注入后，重启微信会再次弹“已加载 v版本号”的提示，用来确认手机上的插件确实是最新版。
 - 插件同时 hook 了 `AsyncOnAddMsg:MsgWrap:`（旧版路径）和 `MainThreadNotifyToExt:`（8.x 新版路径），并做了去重，兼容大部分版本。
+- 发送接口自适应：`SendTextMessage:toUsrName:`（老版）→ `AddMsg:MsgWrap:`（8.0.5x 主路径）→ `SendMessage:isSendByWeChat:`（中间版本），按运行时检测自动选择。
 - 自动模式下 API 失败会回一条“⚠️ AI 调用失败”，不会再静默无反应。
 
 ## 隐私与安全（默认最小读取）

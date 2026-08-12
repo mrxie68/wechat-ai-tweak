@@ -11,6 +11,7 @@
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
 #import <objc/runtime.h>
+#import <time.h>
 #import "AIConfig.h"
 #import "AIContext.h"
 #import "AIAPIClient.h"
@@ -25,6 +26,9 @@
 @property (nonatomic, retain) NSString *m_nsToUsr;
 @property (nonatomic, assign) unsigned int m_uiMessageType;
 @property (nonatomic, assign) unsigned int m_uiCreateTime;
+@property (nonatomic, assign) unsigned int m_uiStatus;
+- (id)initWithMsgType:(long long)type;
+- (id)initWithMsgType:(long long)type nsFromUsr:(NSString *)fromUsr;
 @end
 
 @interface CMessageMgr : NSObject
@@ -32,10 +36,15 @@
 - (void)MainThreadNotifyToExt:(NSDictionary *)ext;
 - (void)SendTextMessage:(NSString *)content toUsrName:(NSString *)usrName;
 - (void)SendMessage:(id)msgWrap isSendByWeChat:(BOOL)flag;
+- (void)AddMsg:(id)arg1 MsgWrap:(id)arg2;
 @end
 
 @interface WCMessageService : NSObject
 - (void)SendMessage:(id)msgWrap isSendByWeChat:(BOOL)flag;
+@end
+
+@interface SettingUtil : NSObject
++ (id)getCurUsrName;
 @end
 
 @interface CContact : NSObject
@@ -68,7 +77,15 @@ static NSString *wechatSelfUsrName(void) {
     if (!center) return nil;
     id contactMgr = [center getService:NSClassFromString(@"CContactMgr")];
     CContact *selfContact = [contactMgr getSelfContact];
-    return [selfContact m_nsUsrName];
+    NSString *usrName = [selfContact m_nsUsrName];
+    if (usrName.length == 0) {
+        // 兜底：用 SettingUtil 拿当前微信号
+        Class settingUtil = NSClassFromString(@"SettingUtil");
+        if (settingUtil && [settingUtil respondsToSelector:@selector(getCurUsrName)]) {
+            usrName = [(id)settingUtil getCurUsrName];
+        }
+    }
+    return usrName;
 }
 
 static BOOL isAutoMode(void) {
@@ -425,7 +442,7 @@ static BOOL g_sendingReply = NO;
             NSLog(kAITweakLogPrefix "获取 CMessageMgr 失败");
             return;
         }
-        // 尝试多种发送接口：老版 SendTextMessage → 新版 SendMessage:isSendByWeChat:
+        // 尝试多种发送接口：SendTextMessage → AddMsg:MsgWrap:（8.0.55 主路径）→ SendMessage:isSendByWeChat:
         BOOL sent = NO;
 
         if ([mgr respondsToSelector:@selector(SendTextMessage:toUsrName:)]) {
@@ -433,6 +450,27 @@ static BOOL g_sendingReply = NO;
             [mgr SendTextMessage:text toUsrName:chatId];
             g_sendingReply = NO;
             sent = YES;
+        } else if ([mgr respondsToSelector:@selector(AddMsg:MsgWrap:)]) {
+            // 8.0.5x 的发送接口：构造 CMessageWrap 后 AddMsg
+            Class wrapCls = NSClassFromString(@"CMessageWrap");
+            if (wrapCls) {
+                NSString *selfUsr = wechatSelfUsrName();
+                CMessageWrap *wrap = nil;
+                if (selfUsr.length > 0) {
+                    wrap = [[wrapCls alloc] initWithMsgType:1 nsFromUsr:selfUsr];
+                } else {
+                    wrap = [[wrapCls alloc] initWithMsgType:1];
+                }
+                if (wrap) {
+                    [wrap setM_nsContent:text];
+                    [wrap setM_nsToUsr:chatId];
+                    [wrap setM_uiMessageType:1];
+                    [wrap setM_uiCreateTime:(unsigned int)time(NULL)];
+                    [wrap setM_uiStatus:1];
+                    [mgr AddMsg:chatId MsgWrap:wrap];
+                    sent = YES;
+                }
+            }
         } else {
             // 构造一个文本消息对象，走新版发送接口
             CMessageWrap *wrap = [[NSClassFromString(@"CMessageWrap") alloc] init];
