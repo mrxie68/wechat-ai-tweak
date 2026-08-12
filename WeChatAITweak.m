@@ -296,7 +296,7 @@ static NSString *aiMD5Hex(NSString *input) {
 // ==================== 数据库直读（学习风格用，只查当前会话） ====================
 
 static NSArray<NSString *> *aiQueryMessages(sqlite3 *db, NSString *table, NSString *textCol,
-                                            NSString *timeCol, NSString *userCol,
+                                            NSString *timeCol, NSString *userCol, NSString *dirCol,
                                             BOOL chatSpecific, NSString *chatId, NSInteger limit) {
     NSMutableArray *rows = [NSMutableArray array];
     NSMutableArray *wheres = [NSMutableArray array];
@@ -307,9 +307,15 @@ static NSArray<NSString *> *aiQueryMessages(sqlite3 *db, NSString *table, NSStri
     NSString *whereSql = wheres.count
         ? [NSString stringWithFormat:@" WHERE %@", [wheres componentsJoinedByString:@" AND "]]
         : @"";
+    NSString *selCols = dirCol.length
+        ? [NSString stringWithFormat:@"\"%@\", \"%@\"",
+           [textCol stringByReplacingOccurrencesOfString:@"\"" withString:@"\"\""],
+           [dirCol stringByReplacingOccurrencesOfString:@"\"" withString:@"\"\""]]
+        : [NSString stringWithFormat:@"\"%@\"",
+           [textCol stringByReplacingOccurrencesOfString:@"\"" withString:@"\"\""]];
     NSString *sql = [NSString stringWithFormat:
-                     @"SELECT \"%@\" FROM \"%@\"%@ ORDER BY \"%@\" DESC LIMIT %ld",
-                     [textCol stringByReplacingOccurrencesOfString:@"\"" withString:@"\"\""],
+                     @"SELECT %@ FROM \"%@\"%@ ORDER BY \"%@\" DESC LIMIT %ld",
+                     selCols,
                      [table stringByReplacingOccurrencesOfString:@"\"" withString:@"\"\""],
                      whereSql,
                      [timeCol stringByReplacingOccurrencesOfString:@"\"" withString:@"\"\""],
@@ -323,7 +329,13 @@ static NSArray<NSString *> *aiQueryMessages(sqlite3 *db, NSString *table, NSStri
             const unsigned char *txt = sqlite3_column_text(stmt, 0);
             if (!txt) continue;
             NSString *content = [NSString stringWithUTF8String:(const char *)txt];
-            if (content.length > 0 && ![content hasPrefix:@"<msg"]) {
+            if (content.length == 0 || [content hasPrefix:@"<msg"]) continue;
+            if (dirCol.length) {
+                // 布尔方向列：非 0 = 自己发的，0 = 对方发的
+                int dirValue = sqlite3_column_int(stmt, 1);
+                [rows addObject:[NSString stringWithFormat:@"%@：%@",
+                                 dirValue != 0 ? @"我" : @"对方", content]];
+            } else {
                 [rows addObject:content];
             }
         }
@@ -339,6 +351,7 @@ static NSArray<NSString *> *fetchRecentTextsFromDB(NSString *chatId, NSInteger l
     NSString *exactChatTable = [@"Chat_" stringByAppendingString:chatId];
     NSString *md5ChatTable = [@"Chat_" stringByAppendingString:aiMD5Hex(chatId)];
     NSInteger fileCount = 0, tableCount = 0, queryCount = 0;
+    NSString *usedDirCol = @"";
     NSArray *dbs = aiFindDatabaseFiles();
     for (NSDictionary *d in dbs) {
         NSString *full = d[@"path"];
@@ -365,6 +378,10 @@ static NSArray<NSString *> *fetchRecentTextsFromDB(NSString *chatId, NSInteger l
                                                      @"sessionId", @"SessionId", @"chatName", @"ChatName",
                                                      @"Session", @"session", @"Chat", @"chat",
                                                      @"ChatId", @"chatId", @"nsFromUsr"]);
+            // 发送方方向列（布尔语义：非0=自己发的），用于学习时区分“我/对方”
+            NSString *dirCol = aiPickColumn(cols, @[@"IsSend", @"isSend", @"IsSender", @"isSender",
+                                                    @"IsFromMe", @"isFromMe", @"FromMe", @"fromMe",
+                                                    @"IsMine", @"isMine", @"MyMsg", @"myMsg"]);
             if (!timeCol) continue;
             // 统一消息表必须能按会话过滤；Chat_ 专属表本身就是一个会话
             if (!chatSpecific && !userCol) continue;
@@ -377,9 +394,12 @@ static NSArray<NSString *> *fetchRecentTextsFromDB(NSString *chatId, NSInteger l
                 NSString *textCol = aiPickColumn(cols, @[tc]);
                 if (!textCol) continue;
                 NSArray *rows = aiQueryMessages(db, tbl, textCol, timeCol, userCol,
-                                                chatSpecific, chatId, limit);
+                                                dirCol, chatSpecific, chatId, limit);
                 [texts addObjectsFromArray:rows];
-                if (texts.count > 0) break;
+                if (texts.count > 0) {
+                    usedDirCol = dirCol.length ? dirCol : @"无";
+                    break;
+                }
             }
             if (texts.count >= (NSUInteger)limit) break;
         }
@@ -390,8 +410,9 @@ static NSArray<NSString *> *fetchRecentTextsFromDB(NSString *chatId, NSInteger l
         [texts removeObjectsInRange:NSMakeRange(0, texts.count - (NSUInteger)limit)];
     }
     if (dbDiag) {
-        *dbDiag = [NSString stringWithFormat:@"[文件%ld/消息表%ld/可查%ld/行%lu]",
+        *dbDiag = [NSString stringWithFormat:@"[文件%ld/消息表%ld/可查%ld/方向%@/行%lu]",
                    (long)fileCount, (long)tableCount, (long)queryCount,
+                   usedDirCol.length ? usedDirCol : (tableCount > 0 ? @"无" : @"未测"),
                    (unsigned long)texts.count];
     }
     // 查询是倒序（新的在前），反转成时间正序给 AI
@@ -1087,53 +1108,99 @@ static NSMutableArray *g_recentReplyOrder = nil;
 }
 
 + (void)learnStyleForChat:(NSString *)chatId {
-    // 拉取历史可能阻塞（回调路径要等几秒），放到后台线程，避免卡界面
+    __block UIAlertController *progressAlert = nil;
+
+    // 显示/更新“学习中”进度弹窗（带转圈）
+    void (^updateProgress)(NSString *) = ^(NSString *stage) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            UIViewController *top = tweakTopViewController();
+            if (!top) return;
+            if (!progressAlert) {
+                progressAlert = [UIAlertController alertControllerWithTitle:@"正在学习聊天风格"
+                                                                   message:stage
+                                                            preferredStyle:UIAlertControllerStyleAlert];
+                UIActivityIndicatorView *spinner = [[UIActivityIndicatorView alloc]
+                                                    initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleMedium];
+                spinner.translatesAutoresizingMaskIntoConstraints = NO;
+                [spinner startAnimating];
+                [progressAlert.view addSubview:spinner];
+                NSDictionary *views = @{@"spinner": spinner};
+                [progressAlert.view addConstraints:
+                 [NSLayoutConstraint constraintsWithVisualFormat:@"V:[spinner]-16-|"
+                                                         options:0 metrics:nil views:views]];
+                [progressAlert.view addConstraints:
+                 [NSLayoutConstraint constraintsWithVisualFormat:@"H:[spinner]-12-|"
+                                                         options:0 metrics:nil views:views]];
+                [top presentViewController:progressAlert animated:NO completion:nil];
+            } else {
+                progressAlert.message = stage;
+            }
+        });
+    };
+
+    // 结束学习：关掉进度弹窗，再弹结果
+    void (^finishLearning)(NSString *, NSString *) = ^(NSString *title, NSString *message) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            UIAlertController *alert = progressAlert;
+            progressAlert = nil;
+            if (alert) {
+                [alert dismissViewControllerAnimated:NO completion:^{
+                    [self presentAlertWithTitle:title message:message];
+                }];
+            } else {
+                [self presentAlertWithTitle:title message:message];
+            }
+        });
+    };
+
+    // 阶段 1：读取最近记录（放后台，避免卡界面）
+    updateProgress(@"正在读取最近 100 条聊天记录…");
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
         NSString *diag = @"";
         NSArray *texts = fetchRecentTexts(chatId, 100, &diag);
-        dispatch_async(dispatch_get_main_queue(), ^{
-            if (texts.count < 5) {
-                // 汇总诊断：条数 + 接口诊断，直接复制到剪贴板，
-                // 用户长按粘贴就能把日志发给作者排查。
-                NSString *fullLog = [NSString stringWithFormat:
-                    @"🤖 微信 AI v%@ 学习失败诊断\n"
-                    @"会话：%@\n"
-                    @"找到文字消息：%lu 条（至少需要 5 条）\n\n"
-                    @"接口诊断：%@",
-                    kAITweakVersion, chatId, (unsigned long)texts.count,
-                    diag.length ? diag : @"未知"];
-                [[UIPasteboard generalPasteboard] setString:fullLog];
-                [self presentAlertWithTitle:@"记录太少（日志已复制）"
-                                    message:[NSString stringWithFormat:
-                                        @"最近 100 条文字消息里只找到 %lu 条可用的（至少需要 5 条才能学习）。\n\n完整诊断日志已复制到剪贴板，直接粘贴发作者即可。",
-                                        (unsigned long)texts.count]];
+        if (texts.count < 5) {
+            // 汇总诊断：条数 + 接口诊断，直接复制到剪贴板，
+            // 用户长按粘贴就能把日志发给作者排查。
+            NSString *fullLog = [NSString stringWithFormat:
+                @"🤖 微信 AI v%@ 学习失败诊断\n"
+                @"会话：%@\n"
+                @"找到文字消息：%lu 条（至少需要 5 条）\n\n"
+                @"接口诊断：%@",
+                kAITweakVersion, chatId, (unsigned long)texts.count,
+                diag.length ? diag : @"未知"];
+            [[UIPasteboard generalPasteboard] setString:fullLog];
+            finishLearning(@"记录太少（日志已复制）",
+                           [NSString stringWithFormat:
+                            @"最近 100 条文字消息里只找到 %lu 条可用的（至少需要 5 条才能学习）。\n\n完整诊断日志已复制到剪贴板，直接粘贴发作者即可。",
+                            (unsigned long)texts.count]);
+            return;
+        }
+
+        // 阶段 2：让 AI 总结风格
+        updateProgress(@"记录读取完成，正在让 AI 总结你的说话风格…");
+        NSString *joined = [texts componentsJoinedByString:@"\n"];
+        NSString *learnPrompt = @"你是一名聊天风格分析师。以下是某微信用户与其好友最近的聊天记录：带“我：”前缀的是用户本人发的，带“对方：”前缀的是对方发的（若没有前缀，说明数据库未提供发送方信息，请结合语境综合判断）。请总结这位“用户本人”的说话风格：语气、常用词/口头禅、句子长短、是否爱用表情和标点、回复习惯、惯用开场或结束语。用 150~250 字的中文直接输出总结，不要客套，不要写“分析如下”之类的开头。";
+        NSArray *messages = @[@{@"role": @"user", @"content": joined}];
+
+        [[AIAPIClient shared] sendMessages:messages
+                              systemPrompt:learnPrompt
+                              styleProfile:nil
+                                completion:^(NSString *reply, NSError *error) {
+            if (error) {
+                NSLog(kAITweakLogPrefix "学习风格失败: %@", error);
+                finishLearning(@"学习失败",
+                               @"调用 DeepSeek 失败（网络异常、API Key 错误或余额不足），请稍后重试。");
                 return;
             }
-
-            NSString *joined = [texts componentsJoinedByString:@"\n"];
-            NSString *learnPrompt = @"你是一名聊天风格分析师。以下是某微信用户与其好友最近的聊天记录片段（包含用户本人的消息和对方的消息，可能不按时间顺序）。请总结这位“用户本人”的说话风格：语气、常用词/口头禅、句子长短、是否爱用表情和标点、回复习惯、惯用开场或结束语。用 150~250 字的中文直接输出总结，不要客套，不要写“分析如下”之类的开头。";
-            NSArray *messages = @[@{@"role": @"user", @"content": joined}];
-
-            [[AIAPIClient shared] sendMessages:messages
-                                  systemPrompt:learnPrompt
-                                  styleProfile:nil
-                                    completion:^(NSString *reply, NSError *error) {
-                if (error) {
-                    NSLog(kAITweakLogPrefix "学习风格失败: %@", error);
-                    [self presentAlertWithTitle:@"学习失败"
-                                        message:@"调用 DeepSeek 失败（网络异常、API Key 错误或余额不足），请稍后重试。"];
-                    return;
-                }
-                NSString *profile = [reply stringByTrimmingCharactersInSet:
-                                     [NSCharacterSet whitespaceAndNewlineCharacterSet]];
-                [AISettings setStyleProfile:profile forChat:chatId];
-                NSLog(kAITweakLogPrefix "风格学习完成（%lu 条记录）: %@", (unsigned long)texts.count, chatId);
-                [self presentAlertWithTitle:@"学习完成"
-                                    message:[NSString stringWithFormat:
-                                        @"已保存这个好友的风格档案，之后与 ta 的对话会用你的语气回复。\n\n档案摘要：\n%@",
-                                        profile.length > 200 ? [profile substringToIndex:200] : profile]];
-            }];
-        });
+            NSString *profile = [reply stringByTrimmingCharactersInSet:
+                                 [NSCharacterSet whitespaceAndNewlineCharacterSet]];
+            [AISettings setStyleProfile:profile forChat:chatId];
+            NSLog(kAITweakLogPrefix "风格学习完成（%lu 条记录）: %@", (unsigned long)texts.count, chatId);
+            finishLearning(@"学习完成",
+                           [NSString stringWithFormat:
+                            @"已保存这个好友的风格档案，之后与 ta 的对话会用你的语气回复。\n\n档案摘要：\n%@",
+                            profile.length > 200 ? [profile substringToIndex:200] : profile]);
+        }];
     });
 }
 
