@@ -216,7 +216,7 @@ static NSString *probeHistoryAPIs(void) {
 
 static NSString *aiCapString(NSString *s, NSUInteger max) {
     if (s.length <= max) return s;
-    NSRange r = [s rangeOfComposedCharacterSequencesAtIndex:max - 1];
+    NSRange r = [s rangeOfComposedCharacterSequenceAtIndex:max - 1];
     return [s substringToIndex:NSMaxRange(r)];
 }
 
