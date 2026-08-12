@@ -9,6 +9,8 @@ static NSString * const kAISettingsReplyModeKey = @"WeChatAIReplyMode";
 static NSString * const kAISettingsEnabledKey = @"WeChatAIEnabled";
 static NSString * const kAISettingsReplyDelayKey = @"WeChatAIReplyDelay";
 static NSString * const kAISettingsChatOverridesKey = @"WeChatAIChatOverrides";
+static NSString * const kAISettingsSingleChatKey = @"WeChatAISingleChatEnabled";
+static NSString * const kAISettingsGroupChatKey = @"WeChatAIGroupChatEnabled";
 
 @implementation AISettings
 
@@ -136,6 +138,36 @@ static NSString * const kAISettingsChatOverridesKey = @"WeChatAIChatOverrides";
     if (!overrides) overrides = [NSMutableDictionary dictionary];
     overrides[chatId] = @(enabled);
     [defaults setObject:overrides forKey:kAISettingsChatOverridesKey];
+    [defaults synchronize];
+}
+
++ (BOOL)chatEnabled:(NSString *)chatId {
+    BOOL isGroup = [chatId containsString:@"@chatroom"];
+    BOOL defaultEnabled = isGroup ? [self groupChatEnabled] : [self singleChatEnabled];
+    return [self chatEnabled:chatId defaultEnabled:defaultEnabled];
+}
+
++ (BOOL)singleChatEnabled {
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    if ([defaults objectForKey:kAISettingsSingleChatKey] == nil) return YES; // 默认开
+    return [defaults boolForKey:kAISettingsSingleChatKey];
+}
+
++ (void)setSingleChatEnabled:(BOOL)enabled {
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    [defaults setBool:enabled forKey:kAISettingsSingleChatKey];
+    [defaults synchronize];
+}
+
++ (BOOL)groupChatEnabled {
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    if ([defaults objectForKey:kAISettingsGroupChatKey] == nil) return NO; // 默认关（防误回复）
+    return [defaults boolForKey:kAISettingsGroupChatKey];
+}
+
++ (void)setGroupChatEnabled:(BOOL)enabled {
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    [defaults setBool:enabled forKey:kAISettingsGroupChatKey];
     [defaults synchronize];
 }
 

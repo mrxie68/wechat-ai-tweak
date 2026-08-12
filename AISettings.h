@@ -19,5 +19,10 @@
 + (void)setReplyDelay:(double)delay;
 + (BOOL)chatEnabled:(NSString *)chatId defaultEnabled:(BOOL)defaultEnabled; // 会话级开关
 + (void)setChatEnabled:(BOOL)enabled chatId:(NSString *)chatId;
++ (BOOL)chatEnabled:(NSString *)chatId;   // 按类别默认（单聊/群聊总开关）判断
++ (BOOL)singleChatEnabled;                // 单聊 AI 总开关（默认开）
++ (void)setSingleChatEnabled:(BOOL)enabled;
++ (BOOL)groupChatEnabled;                 // 群聊 AI 总开关（默认关）
++ (void)setGroupChatEnabled:(BOOL)enabled;
 
 @end

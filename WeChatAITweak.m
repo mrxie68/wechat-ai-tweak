@@ -259,9 +259,8 @@ static void *kAISwitchChatKey = &kAISwitchChatKey;  // 开关 -> chatId
         // 机器人总开关：关闭时别人的消息一律不处理（管理命令只对“自己发的”生效）
         if (![AISettings enabled]) return;
 
-        // 会话级开关：单聊默认开，群聊默认关（防误回复）；可发 @AI 开 / @AI 关 切换
-        BOOL defaultChatOn = isGroup ? NO : YES;
-        if (![AISettings chatEnabled:chatId defaultEnabled:defaultChatOn]) return;
+        // 会话级开关：按类别总开关（单聊/群聊）判断，聊天信息页可单独改
+        if (![AISettings chatEnabled:chatId]) return;
 
         BOOL autoMode = isAutoMode();
 
@@ -300,8 +299,7 @@ static void *kAISwitchChatKey = &kAISwitchChatKey;  // 开关 -> chatId
         default: return; // 系统消息、拍一拍等一律不记录
     }
     if (![AISettings enabled]) return;
-    BOOL isGroup = [chatId containsString:@"@chatroom"];
-    if (![AISettings chatEnabled:chatId defaultEnabled:!isGroup]) return;
+    if (![AISettings chatEnabled:chatId]) return;
     if (isSelf && !isAutoMode()) return; // 自己发的媒体只在自动模式下记（和文本一致）
 
     NSString *placeholder = isSelf
@@ -472,8 +470,7 @@ static void *kAISwitchChatKey = &kAISwitchChatKey;  // 开关 -> chatId
 // 硬开关判断：全局 + 会话级都开着才允许回复
 + (BOOL)shouldReplyInChat:(NSString *)chatId {
     if (![AISettings enabled]) return NO;
-    BOOL isGroup = [chatId containsString:@"@chatroom"];
-    return [AISettings chatEnabled:chatId defaultEnabled:!isGroup];
+    return [AISettings chatEnabled:chatId];
 }
 
 + (NSString *)statusString {
@@ -493,8 +490,10 @@ static void *kAISwitchChatKey = &kAISwitchChatKey;  // 开关 -> chatId
     NSString *whiteDesc = whiteRaw.length == 0 ? @"全部会话" : whiteRaw;
 
     return [NSString stringWithFormat:
-        @"🤖 微信 AI v%@\n开关：%@\n模式：%@\n模型：%@\n延迟：%.1f秒\nhook：收消息Async %@ / 收消息Ext %@ / 发送 %@\nAPI Key：%@\n白名单：%@",
+        @"🤖 微信 AI v%@\n总开关：%@\n单聊/群聊：%@ / %@\n模式：%@\n模型：%@\n延迟：%.1f秒\nhook：收消息Async %@ / 收消息Ext %@ / 发送 %@\nAPI Key：%@\n白名单：%@",
         kAITweakVersion, [AISettings enabled] ? @"开" : @"关",
+        [AISettings singleChatEnabled] ? @"开" : @"关",
+        [AISettings groupChatEnabled] ? @"开" : @"关",
         mode, [AISettings model],
         [AISettings replyDelay],
         g_hookAsync ? @"✓" : @"✗",
@@ -505,8 +504,7 @@ static void *kAISwitchChatKey = &kAISwitchChatKey;  // 开关 -> chatId
 }
 
 + (NSString *)statusStringForChat:(NSString *)chatId {
-    BOOL isGroup = [chatId containsString:@"@chatroom"];
-    BOOL chatOn = [AISettings chatEnabled:chatId defaultEnabled:!isGroup];
+    BOOL chatOn = [AISettings chatEnabled:chatId];
     return [[self statusString] stringByAppendingFormat:@"\n本会话 AI：%@", chatOn ? @"开" : @"关"];
 }
 
@@ -831,8 +829,7 @@ static UITableViewCell *swz_mm_cellForRow(id self, SEL _cmd, UITableView *tableV
     if (config && indexPath.section == 1) {
         NSInteger insertRow = [config[@"row"] integerValue];
         if (indexPath.row == insertRow) {
-            BOOL on = [AISettings chatEnabled:config[@"chat"]
-                              defaultEnabled:![config[@"group"] boolValue]];
+            BOOL on = [AISettings chatEnabled:config[@"chat"]];
             return aiMakeSwitchCell(on, config[@"chat"]);
         }
         if (indexPath.row == insertRow + 1) {
@@ -853,8 +850,7 @@ static void swz_mm_didSelect(id self, SEL _cmd, UITableView *tableView, NSIndexP
         NSInteger insertRow = [config[@"row"] integerValue];
         if (indexPath.row == insertRow) {
             NSString *chatId = config[@"chat"];
-            BOOL isGroup = [config[@"group"] boolValue];
-            BOOL nowOn = [AISettings chatEnabled:chatId defaultEnabled:!isGroup];
+            BOOL nowOn = [AISettings chatEnabled:chatId];
             [AISettings setChatEnabled:!nowOn chatId:chatId];
             [tableView reloadData];
             [tableView deselectRowAtIndexPath:indexPath animated:YES];
