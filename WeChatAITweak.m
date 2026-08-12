@@ -216,6 +216,7 @@ static NSString *g_contextAccount = nil;
 static void *kAIConfigKey = &kAIConfigKey;          // tableView -> 页面配置
 static void *kAISwitchChatKey = &kAISwitchChatKey;  // 开关 -> chatId
 static NSString *g_chatTableDiag = nil;              // 最近一次聊天信息页表格的真实结构（AI 状态里可看）
+static NSString *g_chatTableVC = nil;                // 最近一次识别到的聊天信息页控制器（单聊/群聊）
 
 // 最近发出的 AI 回复（用于回显去重：发出时已记过上下文，回显不再记第二遍）
 static NSObject *g_replyLock = nil;
@@ -769,6 +770,7 @@ static NSDictionary *aiConfigForTable(UITableView *tableView) {
                 NSString *className = NSStringFromClass([responder class]);
                 if ([className isEqualToString:@"AddContactToChatRoomViewController"] ||
                     [className isEqualToString:@"ChatRoomInfoViewController"]) {
+                    g_chatTableVC = className;
                     config = aiBuildConfigForVC((UIViewController *)responder, tableView);
                     if (config) {
                         objc_setAssociatedObject(tableView, &kAIConfigKey, config,
@@ -875,7 +877,8 @@ static NSInteger swz_mm_numberOfRows(id self, SEL _cmd, UITableView *tableView, 
     NSDictionary *config = aiConfigForTable(tableView);
     if (config && section == 1) {
         @try {
-            g_chatTableDiag = [NSString stringWithFormat:@"表=%@ 数据源=%@ 原行数=%ld 插行=%ld",
+            g_chatTableDiag = [NSString stringWithFormat:@"页面=%@ 表=%@ 数据源=%@ 原行数=%ld 插行=%ld",
+                               g_chatTableVC ?: @"未知",
                                NSStringFromClass([tableView class]),
                                NSStringFromClass(object_getClass(self)),
                                (long)orig, (long)[config[@"row"] integerValue]];
