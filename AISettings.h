@@ -11,6 +11,8 @@
 + (void)setApiKey:(NSString *)key;
 + (NSString *)model;
 + (void)setModel:(NSString *)model;
++ (NSString *)replyMode;              // @"auto" / @"trigger"，默认 kAIReplyMode
++ (void)setReplyMode:(NSString *)mode;
 + (BOOL)enabled;                       // 机器人总开关（默认开）
 + (void)setEnabled:(BOOL)enabled;
 + (double)replyDelay;                  // 思考延迟（秒）

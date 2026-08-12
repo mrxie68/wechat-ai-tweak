@@ -5,6 +5,7 @@ static NSString * const kAISettingsAutoPromptKey = @"WeChatAIAutoSystemPrompt";
 static NSString * const kAISettingsStyleSamplesKey = @"WeChatAIStyleSamples";
 static NSString * const kAISettingsAPIKeyKey = @"WeChatAIAPIKey";
 static NSString * const kAISettingsModelKey = @"WeChatAIModel";
+static NSString * const kAISettingsReplyModeKey = @"WeChatAIReplyMode";
 static NSString * const kAISettingsEnabledKey = @"WeChatAIEnabled";
 static NSString * const kAISettingsReplyDelayKey = @"WeChatAIReplyDelay";
 static NSString * const kAISettingsChatOverridesKey = @"WeChatAIChatOverrides";
@@ -76,6 +77,22 @@ static NSString * const kAISettingsChatOverridesKey = @"WeChatAIChatOverrides";
         [defaults setObject:model forKey:kAISettingsModelKey];
     } else {
         [defaults removeObjectForKey:kAISettingsModelKey];
+    }
+    [defaults synchronize];
+}
+
++ (NSString *)replyMode {
+    NSString *stored = [[NSUserDefaults standardUserDefaults] stringForKey:kAISettingsReplyModeKey];
+    if ([stored isEqualToString:@"auto"] || [stored isEqualToString:@"trigger"]) return stored;
+    return kAIReplyMode;
+}
+
++ (void)setReplyMode:(NSString *)mode {
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    if ([mode isEqualToString:@"auto"] || [mode isEqualToString:@"trigger"]) {
+        [defaults setObject:mode forKey:kAISettingsReplyModeKey];
+    } else {
+        [defaults removeObjectForKey:kAISettingsReplyModeKey];
     }
     [defaults synchronize];
 }

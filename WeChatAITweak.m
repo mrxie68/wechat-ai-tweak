@@ -104,7 +104,7 @@ static NSString *wechatSelfUsrName(void) {
 }
 
 static BOOL isAutoMode(void) {
-    return [kAIReplyMode isEqualToString:@"auto"];
+    return [[AISettings replyMode] isEqualToString:@"auto"];
 }
 
 // 白名单：空 = 所有会话都允许触发
@@ -250,7 +250,6 @@ static void *kAISwitchChatKey = &kAISwitchChatKey;  // 开关 -> chatId
 
         // 自己发的消息：先识别 @AI 命令；不是命令则记进上下文（8.0.5x 没有发送 hook，靠回显记录）
         if (isSelf) {
-            if ([self handlePossibleCommand:content chatId:chatId]) return;
             if ([AISettings enabled] && isAutoMode()) {
                 [[AIContext shared] appendAssistant:content chatId:chatId];
             }
@@ -320,29 +319,6 @@ static void *kAISwitchChatKey = &kAISwitchChatKey;  // 开关 -> chatId
     @try {
         NSString *question = [content substringFromIndex:kAITrigger.length];
         question = [question stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-
-        // 命令：清空上下文
-        if ([question isEqualToString:@"清空"] || [question isEqualToString:@"reset"]) {
-            [[AIContext shared] clearAll];
-            [self sendReply:@"✅ 已清空全部会话的上下文" chatId:chatId];
-            return;
-        }
-
-        // 命令：打开微信内设置页（兜底路径：发送 hook 未生效时也能用）
-        if ([question isEqualToString:@"设置"] || [question isEqualToString:@"settings"]) {
-            [self handleCommand:@"settings" chatId:chatId];
-            return;
-        }
-
-        // 本地命令：链路测试 / 状态（不调用 API）
-        if ([question isEqualToString:@"测试"] || [question isEqualToString:@"test"]) {
-            [self handleCommand:@"test" chatId:chatId];
-            return;
-        }
-        if ([question isEqualToString:@"状态"] || [question isEqualToString:@"status"]) {
-            [self handleCommand:@"status" chatId:chatId];
-            return;
-        }
 
         if (question.length == 0) {
             [self sendReply:@"请在 @AI 后加上你的问题，例如：@AI 帮我写一段冒泡排序" chatId:chatId];
@@ -500,69 +476,6 @@ static void *kAISwitchChatKey = &kAISwitchChatKey;  // 开关 -> chatId
     return [AISettings chatEnabled:chatId defaultEnabled:!isGroup];
 }
 
-// 收消息链路里的命令兜底：自己发的 @AI 命令也识别；返回 YES 表示是命令
-+ (BOOL)handlePossibleCommand:(NSString *)content chatId:(NSString *)chatId {
-    NSString *command = [self commandFromContent:content];
-    if (command) {
-        [self handleCommand:command chatId:chatId];
-        return YES;
-    }
-    return NO;
-}
-
-// 自己手动发送的命令：@AI 设置 / @AI 清空
-+ (NSString *)commandFromContent:(NSString *)content {
-    // 兼容两种写法：@AI 设置 / AI 设置
-    NSString *question = nil;
-    if ([content hasPrefix:@"@AI"]) {
-        question = [content substringFromIndex:3];
-    } else if ([content hasPrefix:@"AI "]) {
-        question = [content substringFromIndex:3];
-    } else {
-        return nil;
-    }
-    question = [question stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-    if ([question isEqualToString:@"设置"] || [question isEqualToString:@"settings"]) return @"settings";
-    if ([question isEqualToString:@"清空"] || [question isEqualToString:@"reset"]) return @"clear";
-    if ([question isEqualToString:@"测试"] || [question isEqualToString:@"test"]) return @"test";
-    if ([question isEqualToString:@"状态"] || [question isEqualToString:@"status"]) return @"status";
-    if ([question isEqualToString:@"开"] || [question isEqualToString:@"on"]) return @"chatOn";
-    if ([question isEqualToString:@"关"] || [question isEqualToString:@"off"]) return @"chatOff";
-    return nil;
-}
-
-+ (void)handleCommand:(NSString *)command chatId:(NSString *)chatId {
-    if ([command isEqualToString:@"settings"]) {
-        dispatch_async(dispatch_get_main_queue(), ^{
-            UIViewController *top = tweakTopViewController();
-            if (!top) {
-                NSLog(kAITweakLogPrefix "找不到窗口，无法弹出设置页");
-                return;
-            }
-            UINavigationController *nav = [[UINavigationController alloc]
-                initWithRootViewController:[[AIPromptEditorViewController alloc] init]];
-            [top presentViewController:nav animated:YES completion:nil];
-        });
-    } else if ([command isEqualToString:@"clear"]) {
-        [[AIContext shared] clearAll];
-        [self sendReply:@"✅ 已清空全部会话的上下文" chatId:chatId];
-    } else if ([command isEqualToString:@"test"]) {
-        // 本地链路测试：不调用 API。弹窗 = 收消息正常；消息回复 = 发送正常
-        [self presentAlertWithTitle:@"链路测试"
-                            message:@"✅ 已收到命令（收消息正常）\n如果同时收到一条“插件链路正常”的消息，说明发送也正常；只有弹窗没有消息，则是发送接口问题。"];
-        [self sendReply:@"✅ 收到，插件链路正常（本地测试，未调用 API）" chatId:chatId];
-    } else if ([command isEqualToString:@"status"]) {
-        // 状态用弹窗展示，不依赖发送链路
-        [self presentAlertWithTitle:@"微信 AI 状态" message:[self statusStringForChat:chatId]];
-    } else if ([command isEqualToString:@"chatOn"]) {
-        [AISettings setChatEnabled:YES chatId:chatId];
-        [self sendReply:@"✅ 本会话 AI 已开启" chatId:chatId];
-    } else if ([command isEqualToString:@"chatOff"]) {
-        [AISettings setChatEnabled:NO chatId:chatId];
-        [self sendReply:@"✅ 本会话 AI 已关闭" chatId:chatId];
-    }
-}
-
 + (NSString *)statusString {
     NSString *mode = isAutoMode() ? @"auto（自动代替聊天）" : @"trigger（@AI 触发）";
 
@@ -698,6 +611,26 @@ static void *kAISwitchChatKey = &kAISwitchChatKey;  // 开关 -> chatId
     }
 }
 
+// 聊天信息页“清空记忆”：确认后清空本会话上下文
++ (void)confirmClearMemoryForChat:(NSString *)chatId {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        UIViewController *top = tweakTopViewController();
+        if (!top) return;
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"清空本会话记忆"
+                                                                       message:@"AI 将忘记这个会话之前的聊天内容，且无法恢复。确定清空？"
+                                                                preferredStyle:UIAlertControllerStyleAlert];
+        [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+        [alert addAction:[UIAlertAction actionWithTitle:@"清空"
+                                                 style:UIAlertActionStyleDestructive
+                                               handler:^(UIAlertAction *action) {
+            [[AIContext shared] clearChat:chatId];
+            [self presentAlertWithTitle:@"已清空"
+                                message:@"本会话的记忆已清空，AI 从现在开始重新了解上下文。"];
+        }]];
+        [top presentViewController:alert animated:YES completion:nil];
+    });
+}
+
 @end
 
 #pragma mark - Hook 安装
@@ -729,20 +662,6 @@ static void swz_MainThreadNotifyToExt(id self, SEL _cmd, NSDictionary *ext) {
 }
 
 static void swz_SendTextMessage(id self, SEL _cmd, NSString *content, NSString *usrName) {
-    @try {
-        // 自己手动发的命令：拦截，不真正发送
-        if (!g_sendingReply && content.length > 0 && usrName.length > 0 && isChatAllowed(usrName)) {
-            NSString *command = [WeChatAIHandler commandFromContent:content];
-            if (command) {
-                NSLog(kAITweakLogPrefix "拦截命令 %@ (chat: %@)", command, usrName);
-                [WeChatAIHandler handleCommand:command chatId:usrName];
-                return;
-            }
-        }
-    } @catch (NSException *exception) {
-        NSLog(kAITweakLogPrefix "命令处理异常: %@", exception);
-    }
-
     if (orig_SendTextMessage) {
         orig_SendTextMessage(self, _cmd, content, usrName);
     }
@@ -847,6 +766,27 @@ static UITableViewCell *aiMakeSwitchCell(BOOL on, NSString *chatId) {
     return cell;
 }
 
+// 用微信的 MMTableViewCell 创建“清空记忆”行
+static UITableViewCell *aiMakeMemoryCell(void) {
+    UITableViewCell *cell = nil;
+    @try {
+        Class cellClass = NSClassFromString(@"MMTableViewCell");
+        cell = [[cellClass alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:@"WeChatAIMemoryCell"];
+    } @catch (NSException *exception) {
+        cell = nil;
+    }
+    if (!cell) {
+        cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:@"WeChatAIMemoryCell"];
+    }
+    cell.textLabel.text = @"清空记忆";
+    cell.textLabel.font = [UIFont systemFontOfSize:17];
+    cell.textLabel.textColor = [UIColor systemRedColor];
+    cell.backgroundColor = [UIColor whiteColor];
+    cell.contentView.backgroundColor = [UIColor whiteColor];
+    cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+    return cell;
+}
+
 static void (*orig_reloadTableData_addContact)(id, SEL);
 static void (*orig_reloadTableData_chatRoom)(id, SEL);
 
@@ -881,7 +821,7 @@ static NSInteger (*orig_mm_numberOfRows)(id, SEL, UITableView *, NSInteger);
 static NSInteger swz_mm_numberOfRows(id self, SEL _cmd, UITableView *tableView, NSInteger section) {
     NSInteger orig = orig_mm_numberOfRows ? orig_mm_numberOfRows(self, _cmd, tableView, section) : 0;
     NSDictionary *config = aiConfigForTable(tableView);
-    if (config && section == 1) return orig + 1;
+    if (config && section == 1) return orig + 2; // AI 助手开关 + 清空记忆
     return orig;
 }
 
@@ -895,8 +835,11 @@ static UITableViewCell *swz_mm_cellForRow(id self, SEL _cmd, UITableView *tableV
                               defaultEnabled:![config[@"group"] boolValue]];
             return aiMakeSwitchCell(on, config[@"chat"]);
         }
-        if (indexPath.row > insertRow) {
-            NSIndexPath *shifted = [NSIndexPath indexPathForRow:indexPath.row - 1 inSection:indexPath.section];
+        if (indexPath.row == insertRow + 1) {
+            return aiMakeMemoryCell();
+        }
+        if (indexPath.row > insertRow + 1) {
+            NSIndexPath *shifted = [NSIndexPath indexPathForRow:indexPath.row - 2 inSection:indexPath.section];
             return orig_mm_cellForRow ? orig_mm_cellForRow(self, _cmd, tableView, shifted) : nil;
         }
     }
@@ -917,8 +860,13 @@ static void swz_mm_didSelect(id self, SEL _cmd, UITableView *tableView, NSIndexP
             [tableView deselectRowAtIndexPath:indexPath animated:YES];
             return;
         }
-        if (indexPath.row > insertRow) {
-            NSIndexPath *shifted = [NSIndexPath indexPathForRow:indexPath.row - 1 inSection:indexPath.section];
+        if (indexPath.row == insertRow + 1) {
+            [WeChatAIHandler confirmClearMemoryForChat:config[@"chat"]];
+            [tableView deselectRowAtIndexPath:indexPath animated:YES];
+            return;
+        }
+        if (indexPath.row > insertRow + 1) {
+            NSIndexPath *shifted = [NSIndexPath indexPathForRow:indexPath.row - 2 inSection:indexPath.section];
             if (orig_mm_didSelect) orig_mm_didSelect(self, _cmd, tableView, shifted);
             return;
         }
@@ -932,8 +880,9 @@ static CGFloat swz_mm_heightForRow(id self, SEL _cmd, UITableView *tableView, NS
     if (config && indexPath.section == 1) {
         NSInteger insertRow = [config[@"row"] integerValue];
         if (indexPath.row == insertRow) return 44;
-        if (indexPath.row > insertRow) {
-            NSIndexPath *shifted = [NSIndexPath indexPathForRow:indexPath.row - 1 inSection:indexPath.section];
+        if (indexPath.row == insertRow + 1) return 44;
+        if (indexPath.row > insertRow + 1) {
+            NSIndexPath *shifted = [NSIndexPath indexPathForRow:indexPath.row - 2 inSection:indexPath.section];
             return orig_mm_heightForRow ? orig_mm_heightForRow(self, _cmd, tableView, shifted) : 44;
         }
     }
@@ -1016,7 +965,7 @@ static int installHooks(void) {
             UIViewController *top = tweakTopViewController();
             if (!top) return;
             UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"微信 AI 助手已加载"
-                message:[NSString stringWithFormat:@"v%@ 已加载\n发 @AI 设置 配置提示词；发 @AI 状态 查看运行状态。", kAITweakVersion]
+                message:[NSString stringWithFormat:@"v%@ 已加载\n设置入口：我的 → 插件页面 → 微信 AI 助手\n（聊天信息页的“AI 助手”行可开关/清空记忆）", kAITweakVersion]
                 preferredStyle:UIAlertControllerStyleAlert];
             [alert addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
             [top presentViewController:alert animated:YES completion:nil];
