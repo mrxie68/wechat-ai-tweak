@@ -51,6 +51,9 @@
 // wcplugins（插件管理/收纳）的注册接口
 @interface WCPluginsMgr : NSObject
 + (instancetype)sharedInstance;
+- (void)registerControllerWithTitle:(NSString *)title
+                            version:(NSString *)version
+                         controller:(NSString *)controller;
 - (void)registerSwitchWithTitle:(NSString *)title key:(NSString *)key;
 @end
 
@@ -178,6 +181,7 @@ static BOOL g_hookSend = NO;
 // wcplugins 插件管理（收纳）注册状态
 static BOOL g_wcpluginsClassFound = NO;
 static BOOL g_wcpluginsRegistered = NO;
+static BOOL g_wcpluginsControllerRegistered = NO;
 
 #pragma mark - 核心逻辑
 
@@ -542,7 +546,7 @@ static void *kAISwitchChatKey = &kAISwitchChatKey;  // 开关 -> chatId
         g_hookAsync ? @"✓" : @"✗",
         g_hookExt ? @"✓" : @"✗",
         g_hookSend ? @"✓" : @"✗",
-        g_wcpluginsClassFound ? (g_wcpluginsRegistered ? @"wcplugins ✓ 已注册" : @"wcplugins ✗ 未注册成功") : @"未装 wcplugins",
+        g_wcpluginsClassFound ? (g_wcpluginsRegistered ? (g_wcpluginsControllerRegistered ? @"wcplugins ✓ 设置页已注册" : @"wcplugins ✓ 开关已注册") : @"wcplugins ✗ 未注册成功") : @"未装 wcplugins",
         keyMasked, whiteDesc];
 }
 
@@ -1020,17 +1024,31 @@ static void retryInstall(int remaining) {
 
 // 注册到 wcplugins 插件管理：让“我的 → 插件页面”出现我们的开关
 static void registerWithWCPlugins(int remaining) {
+    if (g_wcpluginsRegistered) return; // 幂等：只注册一次，避免重复条目
     Class mgrClass = NSClassFromString(@"WCPluginsMgr");
     if (mgrClass && [mgrClass respondsToSelector:@selector(sharedInstance)]) {
         g_wcpluginsClassFound = YES;
         id mgr = [mgrClass sharedInstance];
-        if (mgr && [mgr respondsToSelector:@selector(registerSwitchWithTitle:key:)]) {
+        if (mgr) {
             // 预置默认值，让 wcplugins 的开关状态和插件内置默认（开）保持一致
             [[NSUserDefaults standardUserDefaults] registerDefaults:@{@"WeChatAIEnabled" : @YES}];
-            [mgr registerSwitchWithTitle:@"微信 AI 助手" key:@"WeChatAIEnabled"];
-            g_wcpluginsRegistered = YES;
-            NSLog(kAITweakLogPrefix "已注册到 wcplugins 插件管理");
-            return;
+            // 优先：注册可点击条目，点进去就是 AI 设置页
+            if ([mgr respondsToSelector:@selector(registerControllerWithTitle:version:controller:)]) {
+                [mgr registerControllerWithTitle:@"微信 AI 助手"
+                                         version:kAITweakVersion
+                                      controller:@"AIPromptEditorViewController"];
+                g_wcpluginsControllerRegistered = YES;
+                g_wcpluginsRegistered = YES;
+                NSLog(kAITweakLogPrefix "已注册到 wcplugins（设置页条目）");
+                return;
+            }
+            // 老版本 wcplugins：退化为单个开关
+            if ([mgr respondsToSelector:@selector(registerSwitchWithTitle:key:)]) {
+                [mgr registerSwitchWithTitle:@"微信 AI 助手" key:@"WeChatAIEnabled"];
+                g_wcpluginsRegistered = YES;
+                NSLog(kAITweakLogPrefix "已注册到 wcplugins（开关）");
+                return;
+            }
         }
     }
     if (g_wcpluginsRegistered || remaining <= 0) {

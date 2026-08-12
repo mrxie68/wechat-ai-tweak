@@ -59,11 +59,15 @@ static UITextField *makeRowField(NSString *placeholder) {
     self.title = @"AI 设置";
     self.view.backgroundColor = [UIColor systemGroupedBackgroundColor];
 
-    UIBarButtonItem *cancel = [[UIBarButtonItem alloc] initWithTitle:@"取消"
-                                                               style:UIBarButtonItemStylePlain
-                                                              target:self
-                                                              action:@selector(cancelTapped)];
-    self.navigationItem.leftBarButtonItem = cancel;
+    // 模态弹出（AI 设置 命令）才显示“取消”；被 wcplugins 推入导航栈时用微信自带的返回
+    BOOL isModal = (self.navigationController.presentingViewController != nil);
+    if (isModal) {
+        UIBarButtonItem *cancel = [[UIBarButtonItem alloc] initWithTitle:@"取消"
+                                                                   style:UIBarButtonItemStylePlain
+                                                                  target:self
+                                                                  action:@selector(cancelTapped)];
+        self.navigationItem.leftBarButtonItem = cancel;
+    }
 
     UIBarButtonItem *save = [[UIBarButtonItem alloc] initWithTitle:@"保存"
                                                              style:UIBarButtonItemStyleDone
@@ -217,8 +221,16 @@ static UITextField *makeRowField(NSString *placeholder) {
     [[NSNotificationCenter defaultCenter] removeObserver:self];
 }
 
+- (void)dismissOrPop {
+    if (self.navigationController.presentingViewController) {
+        [self dismissViewControllerAnimated:YES completion:nil];
+    } else if (self.navigationController) {
+        [self.navigationController popViewControllerAnimated:YES];
+    }
+}
+
 - (void)cancelTapped {
-    [self dismissViewControllerAnimated:YES completion:nil];
+    [self dismissOrPop];
 }
 
 - (void)saveTapped {
@@ -228,7 +240,7 @@ static UITextField *makeRowField(NSString *placeholder) {
     double delay = [self.delayField.text doubleValue];
     [AISettings setReplyDelay:(delay > 0 && delay <= 30) ? delay : kAIReplyDelaySeconds];
     [AISettings setAutoSystemPrompt:self.textView.text];
-    [self dismissViewControllerAnimated:YES completion:nil];
+    [self dismissOrPop];
 }
 
 - (void)resetTapped {
