@@ -46,6 +46,18 @@
 // 每个会话最多保留最近多少条消息作为上下文
 #define kAIMaxContextMessages 30
 
+// 同角色连续短句合并后的单条内容上限（超过则新起一条，防止气泡过长）
+#define kAIContextMergeMaxLength 800
+
+// 与上一条消息间隔超过这个秒数（3600 = 1 小时）视为新话题，注入系统提示重置语境
+#define kAIContextNewTopicInterval 3600
+
+// 请求参数：温度越低越收敛；0.5 在口语随机性和不跑题之间平衡
+#define kAIRequestTemperature 0.5
+// 频率/存在惩罚：抑制 AI 复读机式重复用词
+#define kAIRequestFrequencyPenalty 0.4
+#define kAIRequestPresencePenalty 0.4
+
 // trigger 模式下 AI 的系统提示词
 #define kAISystemPrompt @"你是微信里的一位 AI 助手，用简体中文简洁、友好地回答问题。你只能聊天，无法执行任何现实操作（找店、点外卖、转账、发红包、发文件、截图、查物流、打电话等）。绝不要承诺或假装能做这些事，不要说“我帮你找/我看看/稍等/马上”这类话；遇到这类请求直接说明做不了，或建议对方自己处理。"
 
@@ -66,6 +78,6 @@
 #define kAITweakLogPrefix @"[WeChatAI] "
 
 // 插件版本（弹窗/状态命令会显示，方便确认手机上装的是不是最新编译）
-#define kAITweakVersion @"0.11.12"
+#define kAITweakVersion @"0.11.13"
 
 #endif

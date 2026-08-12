@@ -50,7 +50,9 @@
     NSDictionary *body = @{
         @"model": [AISettings model],
         @"messages": payload,
-        @"temperature": @0.7
+        @"temperature": @(kAIRequestTemperature),
+        @"frequency_penalty": @(kAIRequestFrequencyPenalty),
+        @"presence_penalty": @(kAIRequestPresencePenalty)
     };
 
     NSError *jsonError = nil;

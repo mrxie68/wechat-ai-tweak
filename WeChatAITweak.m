@@ -669,6 +669,9 @@ static NSMutableArray *g_recentReplyOrder = nil;
         NSString *fromUsr = [wrap m_nsFromUsr];
         NSString *toUsr = [wrap m_nsToUsr];
         if (fromUsr.length == 0) return;
+        unsigned int msgTime = [wrap respondsToSelector:@selector(m_uiCreateTime)]
+            ? (unsigned int)[wrap m_uiCreateTime]
+            : (unsigned int)time(NULL);
 
         // 新旧收消息 hook 可能同时触发，去重
         if (isDuplicateMessage(wrap)) return;
@@ -690,7 +693,7 @@ static NSMutableArray *g_recentReplyOrder = nil;
         // 非文本消息（图片/语音/视频/表情/位置/文件）：不自动回复，
         // 只记一条占位符，让 AI 知道对方发过媒体但不编造看不到的内容
         if (msgType != 1) {
-            [self recordMediaPlaceholder:msgType isSelf:isSelf chatId:chatId];
+            [self recordMediaPlaceholder:msgType isSelf:isSelf timestamp:msgTime chatId:chatId];
             return;
         }
 
@@ -701,7 +704,7 @@ static NSMutableArray *g_recentReplyOrder = nil;
             // 插件自己刚发出的回复回显：发出时已记过上下文，这里跳过，避免记两遍
             if ([self isRecentReply:content chatId:chatId]) return;
             if ([AISettings enabled] && isAutoMode()) {
-                [[AIContext shared] appendAssistant:content chatId:chatId];
+                [[AIContext shared] appendAssistant:content timestamp:msgTime chatId:chatId];
             }
             return;
         }
@@ -717,19 +720,19 @@ static NSMutableArray *g_recentReplyOrder = nil;
         // trigger 模式：只响应 @AI 开头的消息
         if (!autoMode) {
             if ([content hasPrefix:kAITrigger]) {
-                [self handleTriggerMessage:content chatId:chatId];
+                [self handleTriggerMessage:content timestamp:msgTime chatId:chatId];
             }
             return;
         }
 
         // 自动模式：@AI 开头的消息仍按手动命令/提问处理（清空、指定问题）
         if ([content hasPrefix:kAITrigger]) {
-            [self handleTriggerMessage:content chatId:chatId];
+            [self handleTriggerMessage:content timestamp:msgTime chatId:chatId];
             return;
         }
 
         // 自动模式：对方发消息 → 记入上下文 → 自动回复
-        [[AIContext shared] appendUser:content chatId:chatId];
+        [[AIContext shared] appendUser:content timestamp:msgTime chatId:chatId];
         [self enqueueReplyForChat:chatId message:content];
     } @catch (NSException *exception) {
         NSLog(kAITweakLogPrefix "处理消息异常: %@", exception);
@@ -737,7 +740,8 @@ static NSMutableArray *g_recentReplyOrder = nil;
 }
 
 // 媒体消息占位：只记“发了什么类型”，不记内容、不回复
-+ (void)recordMediaPlaceholder:(unsigned int)msgType isSelf:(BOOL)isSelf chatId:(NSString *)chatId {
++ (void)recordMediaPlaceholder:(unsigned int)msgType isSelf:(BOOL)isSelf
+                     timestamp:(unsigned int)timestamp chatId:(NSString *)chatId {
     NSString *name = nil;
     switch (msgType) {
         case 3:  name = @"图片"; break;
@@ -756,14 +760,15 @@ static NSMutableArray *g_recentReplyOrder = nil;
         ? [NSString stringWithFormat:@"（我发了一条%@消息，内容未知）", name]
         : [NSString stringWithFormat:@"（对方发了一条%@消息，内容未知）", name];
     if (isSelf) {
-        [[AIContext shared] appendAssistant:placeholder chatId:chatId];
+        [[AIContext shared] appendAssistant:placeholder timestamp:timestamp chatId:chatId];
     } else {
-        [[AIContext shared] appendUser:placeholder chatId:chatId];
+        [[AIContext shared] appendUser:placeholder timestamp:timestamp chatId:chatId];
     }
     NSLog(kAITweakLogPrefix "记录媒体占位符(%@): %@", name, chatId);
 }
 
-+ (void)handleTriggerMessage:(NSString *)content chatId:(NSString *)chatId {
++ (void)handleTriggerMessage:(NSString *)content timestamp:(unsigned int)timestamp
+                      chatId:(NSString *)chatId {
     @try {
         NSString *question = [content substringFromIndex:kAITrigger.length];
         question = [question stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
@@ -784,7 +789,7 @@ static NSMutableArray *g_recentReplyOrder = nil;
         }
 
         // 记录用户消息 → 带上下文请求 AI
-        [[AIContext shared] appendUser:content chatId:chatId];
+        [[AIContext shared] appendUser:content timestamp:timestamp chatId:chatId];
         NSArray *history = [[AIContext shared] messagesForChat:chatId];
         NSUInteger epoch = [[AIContext shared] epoch];
 
@@ -813,7 +818,7 @@ static NSMutableArray *g_recentReplyOrder = nil;
                                     message:@"请求 DeepSeek 失败（网络异常、API Key 错误或余额不足），本次没有发送任何回复。请检查后重试。"];
                 return;
             }
-            [[AIContext shared] appendAssistant:reply chatId:chatId];
+            [[AIContext shared] appendAssistant:reply timestamp:(NSTimeInterval)time(NULL) chatId:chatId];
             [self sendReply:reply chatId:chatId];
         }];
     } @catch (NSException *exception) {
@@ -892,7 +897,7 @@ static NSMutableArray *g_recentReplyOrder = nil;
             double typing = MIN(MAX((double)reply.length * 0.15, 0.8), 8.0)
                           + (double)(arc4random_uniform(15) / 10.0);
             // 先记入上下文（发出后回显会被去重，不会记两遍）
-            [[AIContext shared] appendAssistant:reply chatId:chatId];
+            [[AIContext shared] appendAssistant:reply timestamp:(NSTimeInterval)time(NULL) chatId:chatId];
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(typing * NSEC_PER_SEC)),
                            dispatch_get_main_queue(), ^{
                 [self sendReply:reply chatId:chatId];
@@ -1088,7 +1093,7 @@ static NSMutableArray *g_recentReplyOrder = nil;
         UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"学习聊天风格"
                                                                        message:profile.length > 0
             ? @"这个好友已有学习档案。可以重新学习覆盖，或清除档案。"
-            : @"将读取这个好友最近 100 条文字聊天记录，并发送给 DeepSeek 总结你的说话风格（仅对这位好友生效）。\n\n记录只用于本次学习，原文不会保存，只保存风格总结。确定继续？"
+            : @"将读取这个好友最近 50 条文字聊天记录，并发送给 DeepSeek 总结你的说话风格（仅对这位好友生效）。\n\n记录只用于本次学习，原文不会保存，只保存风格总结。确定继续？"
                                                                 preferredStyle:UIAlertControllerStyleAlert];
         [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
         [alert addAction:[UIAlertAction actionWithTitle:profile.length > 0 ? @"重新学习" : @"开始学习"
@@ -1156,10 +1161,21 @@ static NSMutableArray *g_recentReplyOrder = nil;
     };
 
     // 阶段 1：读取最近记录（放后台，避免卡界面）
-    updateProgress(@"正在读取最近 100 条聊天记录…");
+    updateProgress(@"正在读取最近 50 条聊天记录…");
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
         NSString *diag = @"";
-        NSArray *texts = fetchRecentTexts(chatId, 100, &diag);
+        NSArray *texts = fetchRecentTexts(chatId, 50, &diag);
+        // 过滤掉“哦/？/哈哈”这类 ≤2 字的极短消息，提高语料信息密度
+        NSMutableArray *filtered = [NSMutableArray array];
+        for (NSString *t in texts) {
+            NSString *body = t;
+            if ([body hasPrefix:@"我："]) body = [body substringFromIndex:2];
+            else if ([body hasPrefix:@"对方："]) body = [body substringFromIndex:3];
+            body = [body stringByTrimmingCharactersInSet:
+                    [NSCharacterSet whitespaceAndNewlineCharacterSet]];
+            if (body.length > 2) [filtered addObject:t];
+        }
+        texts = filtered;
         if (texts.count < 5) {
             // 汇总诊断：条数 + 接口诊断，直接复制到剪贴板，
             // 用户长按粘贴就能把日志发给作者排查。
@@ -1173,7 +1189,7 @@ static NSMutableArray *g_recentReplyOrder = nil;
             [[UIPasteboard generalPasteboard] setString:fullLog];
             finishLearning(@"记录太少（日志已复制）",
                            [NSString stringWithFormat:
-                            @"最近 100 条文字消息里只找到 %lu 条可用的（至少需要 5 条才能学习）。\n\n完整诊断日志已复制到剪贴板，直接粘贴发作者即可。",
+                            @"最近 50 条文字消息里只找到 %lu 条可用的（至少需要 5 条才能学习）。\n\n完整诊断日志已复制到剪贴板，直接粘贴发作者即可。",
                             (unsigned long)texts.count]);
             return;
         }
