@@ -754,15 +754,12 @@ static NSDictionary *aiBuildConfigForVC(UIViewController *vc, UITableView *table
 }
 
 static BOOL g_buildingConfig = NO;
-static void *kAIScanDoneKey = &kAIScanDoneKey;  // 已扫描过但非聊天信息页的表格，避免反复走响应链
 
 // 取表格配置；没有就懒加载：沿响应链找到页面 VC 并挂上（不依赖 reloadTableData 时机）
 static NSDictionary *aiConfigForTable(UITableView *tableView) {
     NSDictionary *config = objc_getAssociatedObject(tableView, &kAIConfigKey);
     if (config) return config;
     if (g_buildingConfig) return nil; // 防止扫描时递归
-    // 已确认不是聊天信息页的表格：直接返回，不让微信所有列表都被拖慢
-    if (objc_getAssociatedObject(tableView, &kAIScanDoneKey)) return nil;
 
     g_buildingConfig = YES;
     @try {
@@ -781,8 +778,6 @@ static NSDictionary *aiConfigForTable(UITableView *tableView) {
                 break;
             }
         }
-        // 无论是否匹配都标记已扫描，避免对每张表格反复走响应链
-        objc_setAssociatedObject(tableView, &kAIScanDoneKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     } @catch (NSException *exception) {
         config = nil;
     }
