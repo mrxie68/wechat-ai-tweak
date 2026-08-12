@@ -28,7 +28,7 @@ static NSArray<NSDictionary *> *aiParseFewShotSamples(NSString *samples, NSUInte
         if (line.length < 2) continue;
         unichar c0 = [line characterAtIndex:0];
         unichar c1 = [line characterAtIndex:1];
-        if (c1 != ':' && c1 != '：') continue;
+        if (c1 != ':' && c1 != 0xFF1A) continue;  // 0xFF1A = 全角冒号：
         NSString *role = nil;
         if (c0 == 'Q' || c0 == 'q') role = @"user";
         else if (c0 == 'A' || c0 == 'a') role = @"assistant";
