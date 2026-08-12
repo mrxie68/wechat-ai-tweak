@@ -152,22 +152,25 @@ static UITextField *makeRowField(NSString *placeholder) {
 
     CGFloat width = self.view.bounds.size.width;
     CGFloat height = self.view.bounds.size.height;
+    CGFloat topInset = self.view.safeAreaInsets.top;
+    CGFloat bottomInset = self.view.safeAreaInsets.bottom;
     CGFloat margin = 16;
     CGFloat cardWidth = width - margin * 2;
     CGFloat rowHeight = 48;
-    CGFloat y = margin + 4;
+    CGFloat gap = 8; // 行与行之间的小间隙
+    CGFloat y = topInset + margin + 4;
 
     self.switchCard.frame = CGRectMake(margin, y, cardWidth, 56);
     y += 56 + 12;
 
     self.keyCard.frame = CGRectMake(margin, y, cardWidth, rowHeight);
-    y += rowHeight;
+    y += rowHeight + gap;
     self.modelCard.frame = CGRectMake(margin, y, cardWidth, rowHeight);
-    y += rowHeight;
+    y += rowHeight + gap;
     self.delayCard.frame = CGRectMake(margin, y, cardWidth, rowHeight);
     y += rowHeight + 12;
 
-    CGFloat promptHeight = MAX(150, height - y - 60 - 24);
+    CGFloat promptHeight = MAX(150, height - y - 48 - 28 - bottomInset);
     self.promptCard.frame = CGRectMake(margin, y, cardWidth, promptHeight);
     y += promptHeight + 12;
     self.resetButton.frame = CGRectMake(margin, y, cardWidth, 48);
