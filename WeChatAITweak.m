@@ -761,8 +761,66 @@ static NSDictionary *aiBuildConfigForVC(UIViewController *vc, UITableView *table
     return @{@"vc": vc, @"group": @(isGroup), @"row": @(insertRow), @"chat": chatId};
 }
 
+static BOOL g_buildingConfig = NO;
+
+// 取表格配置；没有就懒加载：沿响应链找到页面 VC 并挂上（不依赖 reloadTableData 时机）
 static NSDictionary *aiConfigForTable(UITableView *tableView) {
-    return objc_getAssociatedObject(tableView, &kAIConfigKey);
+    NSDictionary *config = objc_getAssociatedObject(tableView, &kAIConfigKey);
+    if (config) return config;
+    if (g_buildingConfig) return nil; // 防止扫描时递归
+
+    g_buildingConfig = YES;
+    @try {
+        UIResponder *responder = tableView;
+        while ((responder = [responder nextResponder])) {
+            if ([responder isKindOfClass:[UIViewController class]]) {
+                NSString *className = NSStringFromClass([responder class]);
+                if ([className isEqualToString:@"AddContactToChatRoomViewController"] ||
+                    [className isEqualToString:@"ChatRoomInfoViewController"]) {
+                    config = aiBuildConfigForVC((UIViewController *)responder, tableView);
+                    if (config) {
+                        objc_setAssociatedObject(tableView, &kAIConfigKey, config,
+                                                 OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+                    }
+                }
+                break;
+            }
+        }
+    } @catch (NSException *exception) {
+        config = nil;
+    }
+    g_buildingConfig = NO;
+    return config;
+}
+
+// 用微信原生样式创建开关行；失败回退到普通样式
+static UITableViewCell *aiMakeSwitchCell(BOOL on, NSString *chatId) {
+    UITableViewCell *cell = nil;
+    @try {
+        Class managerClass = NSClassFromString(@"WCTableViewNormalCellManager");
+        if (managerClass && [managerClass respondsToSelector:@selector(normalCellForSel:target:title:accessoryType:)]) {
+            id manager = [managerClass normalCellForSel:NULL target:nil title:@"AI 助手" accessoryType:0];
+            cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:@"WeChatAICell"];
+            if (manager && [manager respondsToSelector:@selector(configureCell:)]) {
+                [manager configureCell:cell];
+            }
+        }
+    } @catch (NSException *exception) {
+        cell = nil;
+    }
+    if (!cell) {
+        cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:@"WeChatAICell"];
+        cell.textLabel.text = @"AI 助手";
+        cell.textLabel.font = [UIFont systemFontOfSize:16];
+    }
+    UISwitch *switchView = [[UISwitch alloc] initWithFrame:CGRectZero];
+    switchView.on = on;
+    objc_setAssociatedObject(switchView, &kAISwitchChatKey, chatId, OBJC_ASSOCIATION_COPY_NONATOMIC);
+    [switchView addTarget:[WeChatAIHandler class]
+                   action:@selector(aiSwitchChanged:)
+         forControlEvents:UIControlEventValueChanged];
+    cell.accessoryView = switchView;
+    return cell;
 }
 
 static void (*orig_reloadTableData_addContact)(id, SEL);
@@ -809,20 +867,9 @@ static UITableViewCell *swz_mm_cellForRow(id self, SEL _cmd, UITableView *tableV
     if (config && indexPath.section == 1) {
         NSInteger insertRow = [config[@"row"] integerValue];
         if (indexPath.row == insertRow) {
-            UITableViewCell *cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault
-                                                           reuseIdentifier:@"WeChatAICell"];
-            cell.textLabel.text = @"AI 助手";
-            cell.textLabel.font = [UIFont systemFontOfSize:16];
-            UISwitch *switchView = [[UISwitch alloc] initWithFrame:CGRectZero];
-            switchView.on = [AISettings chatEnabled:config[@"chat"]
-                                    defaultEnabled:![config[@"group"] boolValue]];
-            objc_setAssociatedObject(switchView, &kAISwitchChatKey, config[@"chat"],
-                                     OBJC_ASSOCIATION_COPY_NONATOMIC);
-            [switchView addTarget:[WeChatAIHandler class]
-                           action:@selector(aiSwitchChanged:)
-                 forControlEvents:UIControlEventValueChanged];
-            cell.accessoryView = switchView;
-            return cell;
+            BOOL on = [AISettings chatEnabled:config[@"chat"]
+                              defaultEnabled:![config[@"group"] boolValue]];
+            return aiMakeSwitchCell(on, config[@"chat"]);
         }
         if (indexPath.row > insertRow) {
             NSIndexPath *shifted = [NSIndexPath indexPathForRow:indexPath.row - 1 inSection:indexPath.section];
