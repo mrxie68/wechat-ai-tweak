@@ -215,6 +215,7 @@ static NSMutableSet *g_pendingChats = nil;
 static NSString *g_contextAccount = nil;
 static void *kAIConfigKey = &kAIConfigKey;          // tableView -> 页面配置
 static void *kAISwitchChatKey = &kAISwitchChatKey;  // 开关 -> chatId
+static NSString *g_chatTableDiag = nil;              // 最近一次聊天信息页表格的真实结构（AI 状态里可看）
 
 // 最近发出的 AI 回复（用于回显去重：发出时已记过上下文，回显不再记第二遍）
 static NSObject *g_replyLock = nil;
@@ -541,9 +542,10 @@ static NSMutableArray *g_recentReplyOrder = nil;
     NSString *whiteRaw = [kAIAllowedChats stringByTrimmingCharactersInSet:
                           [NSCharacterSet whitespaceAndNewlineCharacterSet]];
     NSString *whiteDesc = whiteRaw.length == 0 ? @"全部会话" : whiteRaw;
+    NSString *tableDiag = g_chatTableDiag.length ? g_chatTableDiag : @"（还没打开过聊天信息页）";
 
     return [NSString stringWithFormat:
-        @"🤖 微信 AI v%@\n总开关：%@\n单聊/群聊：%@ / %@\n模式：%@\n模型：%@\n延迟：%.1f秒\nhook：收消息Async %@ / 收消息Ext %@ / 发送 %@\nAPI Key：%@\n白名单：%@",
+        @"🤖 微信 AI v%@\n总开关：%@\n单聊/群聊：%@ / %@\n模式：%@\n模型：%@\n延迟：%.1f秒\nhook：收消息Async %@ / 收消息Ext %@ / 发送 %@\nAPI Key：%@\n白名单：%@\n表格诊断：%@",
         kAITweakVersion, [AISettings enabled] ? @"开" : @"关",
         [AISettings singleChatEnabled] ? @"开" : @"关",
         [AISettings groupChatEnabled] ? @"开" : @"关",
@@ -553,7 +555,7 @@ static NSMutableArray *g_recentReplyOrder = nil;
         g_hookExt ? @"✓" : @"✗",
         g_hookSend ? @"✓" : @"✗",
         g_wcpluginsClassFound ? (g_wcpluginsRegistered ? (g_wcpluginsControllerRegistered ? @"wcplugins ✓ 设置页已注册" : @"wcplugins ✓ 开关已注册") : @"wcplugins ✗ 未注册成功") : @"未装 wcplugins",
-        keyMasked, whiteDesc];
+        keyMasked, whiteDesc, tableDiag];
 }
 
 + (void)presentAlertWithTitle:(NSString *)title message:(NSString *)message {
@@ -873,7 +875,17 @@ static NSInteger swz_mm_numberOfRows(id self, SEL _cmd, UITableView *tableView, 
     if (classOrig) origFn = (NSInteger (*)(id, SEL, UITableView *, NSInteger))[classOrig pointerValue];
     NSInteger orig = origFn ? origFn(self, _cmd, tableView, section) : 0;
     NSDictionary *config = aiConfigForTable(tableView);
-    if (config && section == 1) return orig + 2; // AI 助手开关 + 清空记忆
+    if (config && section == 1) {
+        @try {
+            g_chatTableDiag = [NSString stringWithFormat:@"表=%@ 数据源=%@ 原行数=%ld 插行=%ld",
+                               NSStringFromClass([tableView class]),
+                               NSStringFromClass(object_getClass(self)),
+                               (long)orig, (long)[config[@"row"] integerValue]];
+        } @catch (NSException *exception) {
+            // 诊断信息失败不影响功能
+        }
+        return orig + 2; // AI 助手开关 + 清空记忆
+    }
     return orig;
 }
 
@@ -916,6 +928,7 @@ static UITableViewCell *swz_mm_cellForRow(id self, SEL _cmd, UITableView *tableV
             return aiMakeSwitchCell(on, config[@"chat"]);
         }
         if (indexPath.row == insertRow + 1) {
+            g_chatTableDiag = [g_chatTableDiag stringByAppendingString:@" 清空记忆✓"];
             return aiMakeMemoryCell();
         }
         if (indexPath.row > insertRow + 1) {
