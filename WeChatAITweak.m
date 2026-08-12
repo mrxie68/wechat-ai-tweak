@@ -884,6 +884,10 @@ static void WeChatAIInit(void) {
         detail = [detail stringByAppendingString:@"\n…（过长截断）"];
     }
 
+    // 自动复制到剪贴板，不用截图/OCR，直接粘贴发给我
+    [[UIPasteboard generalPasteboard] setString:detail];
+    detail = [detail stringByAppendingString:@"\n\n（内容已复制到剪贴板）"];
+
     dispatch_async(dispatch_get_main_queue(), ^{
         UIViewController *top = tweakTopViewController();
         if (!top) return;
