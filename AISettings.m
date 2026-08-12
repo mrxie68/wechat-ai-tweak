@@ -2,6 +2,7 @@
 #import "AIConfig.h"
 
 static NSString * const kAISettingsAutoPromptKey = @"WeChatAIAutoSystemPrompt";
+static NSString * const kAISettingsStyleSamplesKey = @"WeChatAIStyleSamples";
 static NSString * const kAISettingsAPIKeyKey = @"WeChatAIAPIKey";
 static NSString * const kAISettingsModelKey = @"WeChatAIModel";
 static NSString * const kAISettingsEnabledKey = @"WeChatAIEnabled";
@@ -22,6 +23,20 @@ static NSString * const kAISettingsChatOverridesKey = @"WeChatAIChatOverrides";
         [defaults setObject:prompt forKey:kAISettingsAutoPromptKey];
     } else {
         [defaults removeObjectForKey:kAISettingsAutoPromptKey];
+    }
+    [defaults synchronize];
+}
+
++ (NSString *)styleSamples {
+    return [[NSUserDefaults standardUserDefaults] stringForKey:kAISettingsStyleSamplesKey] ?: @"";
+}
+
++ (void)setStyleSamples:(NSString *)samples {
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    if (samples.length > 0) {
+        [defaults setObject:samples forKey:kAISettingsStyleSamplesKey];
+    } else {
+        [defaults removeObjectForKey:kAISettingsStyleSamplesKey];
     }
     [defaults synchronize];
 }

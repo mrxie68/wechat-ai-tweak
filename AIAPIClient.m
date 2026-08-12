@@ -26,8 +26,14 @@
 
     // 系统提示词 + 会话历史
     NSMutableArray *payload = [NSMutableArray array];
-    if (systemPrompt.length > 0) {
-        [payload addObject:@{@"role": @"system", @"content": systemPrompt}];
+    NSString *finalPrompt = systemPrompt;
+    NSString *samples = [AISettings styleSamples];
+    if (samples.length > 0) {
+        finalPrompt = [finalPrompt stringByAppendingFormat:
+            @"\n\n【你的真实聊天风格样本，请模仿这里的语气、用词和习惯来回复】\n%@", samples];
+    }
+    if (finalPrompt.length > 0) {
+        [payload addObject:@{@"role": @"system", @"content": finalPrompt}];
     }
     [payload addObjectsFromArray:messages];
 

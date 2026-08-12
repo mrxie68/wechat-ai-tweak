@@ -2,7 +2,7 @@
 #import "AISettings.h"
 #import "AIConfig.h"
 
-@interface AIPromptEditorViewController ()
+@interface AIPromptEditorViewController () <UITextFieldDelegate>
 @property (nonatomic, strong) UIView *switchCard;
 @property (nonatomic, strong) UILabel *enabledLabel;
 @property (nonatomic, strong) UISwitch *enabledSwitch;
@@ -11,7 +11,7 @@
 @property (nonatomic, strong) UITextField *apiKeyField;
 @property (nonatomic, strong) UIView *modelCard;
 @property (nonatomic, strong) UILabel *modelLabel;
-@property (nonatomic, strong) UITextField *modelField;
+@property (nonatomic, strong) UILabel *modelValueLabel;
 @property (nonatomic, strong) UIView *delayCard;
 @property (nonatomic, strong) UILabel *delayLabel;
 @property (nonatomic, strong) UITextField *delayField;
@@ -19,7 +19,13 @@
 @property (nonatomic, strong) UILabel *promptLabel;
 @property (nonatomic, strong) UITextView *textView;
 @property (nonatomic, strong) UILabel *promptHint;
+@property (nonatomic, strong) UIView *styleCard;
+@property (nonatomic, strong) UILabel *styleLabel;
+@property (nonatomic, strong) UITextView *styleView;
+@property (nonatomic, strong) UILabel *styleHint;
 @property (nonatomic, strong) UIButton *resetButton;
+@property (nonatomic, strong) NSString *apiKeyReal;   // 当前真实 API Key（界面只显示掩码）
+@property (nonatomic) BOOL editingKey;               // 用户正在编辑 Key（编辑时才显示明文）
 @property (nonatomic) BOOL keyboardVisible;
 @end
 
@@ -90,7 +96,10 @@ static UITextField *makeRowField(NSString *placeholder) {
     self.keyLabel = makeRowLabel(@"API Key");
     [self.keyCard addSubview:self.keyLabel];
     self.apiKeyField = makeRowField(@"sk- 开头");
-    self.apiKeyField.text = [AISettings apiKey];
+    self.apiKeyField.delegate = self;
+    self.apiKeyReal = [AISettings apiKey];
+    self.editingKey = NO;
+    self.apiKeyField.text = [self maskedKey:self.apiKeyReal];
     [self.keyCard addSubview:self.apiKeyField];
 
     // 模型
@@ -98,9 +107,15 @@ static UITextField *makeRowField(NSString *placeholder) {
     [self.view addSubview:self.modelCard];
     self.modelLabel = makeRowLabel(@"模型名");
     [self.modelCard addSubview:self.modelLabel];
-    self.modelField = makeRowField(@"deepseek-v4-flash");
-    self.modelField.text = [AISettings model];
-    [self.modelCard addSubview:self.modelField];
+    self.modelValueLabel = [[UILabel alloc] initWithFrame:CGRectZero];
+    self.modelValueLabel.font = [UIFont systemFontOfSize:15];
+    self.modelValueLabel.textColor = [UIColor secondaryLabelColor];
+    self.modelValueLabel.textAlignment = NSTextAlignmentRight;
+    [self refreshModelLabel];
+    [self.modelCard addSubview:self.modelValueLabel];
+    self.modelCard.userInteractionEnabled = YES;
+    [self.modelCard addGestureRecognizer:[[UITapGestureRecognizer alloc]
+                                          initWithTarget:self action:@selector(modelTapped)]];
 
     // 思考延迟
     self.delayCard = makeCard();
@@ -129,6 +144,24 @@ static UITextField *makeRowField(NSString *placeholder) {
     self.promptHint.font = [UIFont systemFontOfSize:12];
     self.promptHint.textColor = [UIColor secondaryLabelColor];
     [self.promptCard addSubview:self.promptHint];
+
+    // 聊天风格样本：粘贴你自己的聊天记录，AI 会模仿你的语气习惯
+    self.styleCard = makeCard();
+    [self.view addSubview:self.styleCard];
+    self.styleLabel = makeRowLabel(@"聊天风格样本");
+    [self.styleCard addSubview:self.styleLabel];
+    self.styleView = [[UITextView alloc] initWithFrame:CGRectZero];
+    self.styleView.font = [UIFont systemFontOfSize:15];
+    self.styleView.text = [AISettings styleSamples];
+    self.styleView.backgroundColor = [UIColor clearColor];
+    self.styleView.textContainerInset = UIEdgeInsetsMake(8, 4, 8, 4);
+    self.styleView.keyboardDismissMode = UIScrollViewKeyboardDismissModeInteractive;
+    [self.styleCard addSubview:self.styleView];
+    self.styleHint = [[UILabel alloc] initWithFrame:CGRectZero];
+    self.styleHint.text = @"粘贴你自己的聊天记录片段，AI 会模仿这个语气和习惯；留空则用默认风格";
+    self.styleHint.font = [UIFont systemFontOfSize:12];
+    self.styleHint.textColor = [UIColor secondaryLabelColor];
+    [self.styleCard addSubview:self.styleHint];
 
     // 恢复默认
     self.resetButton = [UIButton buttonWithType:UIButtonTypeSystem];
@@ -174,9 +207,13 @@ static UITextField *makeRowField(NSString *placeholder) {
     self.delayCard.frame = CGRectMake(margin, y, cardWidth, rowHeight);
     y += rowHeight + 12;
 
-    CGFloat promptHeight = MAX(150, height - y - 48 - 28 - bottomInset);
-    self.promptCard.frame = CGRectMake(margin, y, cardWidth, promptHeight);
-    y += promptHeight + 12;
+    // 提示词和风格样本两个大卡片平分剩余空间
+    CGFloat textArea = height - y - 48 - 12 - 12 - bottomInset;
+    CGFloat textCardHeight = MAX(100, (textArea - 12) / 2);
+    self.promptCard.frame = CGRectMake(margin, y, cardWidth, textCardHeight);
+    y += textCardHeight + 12;
+    self.styleCard.frame = CGRectMake(margin, y, cardWidth, textCardHeight);
+    y += textCardHeight + 12;
     self.resetButton.frame = CGRectMake(margin, y, cardWidth, 48);
 
     // 卡片内部布局
@@ -184,17 +221,101 @@ static UITextField *makeRowField(NSString *placeholder) {
     self.enabledSwitch.frame = CGRectMake(cardWidth - 60 - 14, 13, 60, 30);
 
     [self layoutLabel:self.keyLabel field:self.apiKeyField cardWidth:cardWidth];
-    [self layoutLabel:self.modelLabel field:self.modelField cardWidth:cardWidth];
+    self.modelLabel.frame = CGRectMake(16, 0, 110, 48);
+    self.modelValueLabel.frame = CGRectMake(130, 0, cardWidth - 130 - 26, 48);
     [self layoutLabel:self.delayLabel field:self.delayField cardWidth:cardWidth];
 
     self.promptLabel.frame = CGRectMake(16, 12, cardWidth - 32, 20);
-    self.textView.frame = CGRectMake(12, 38, cardWidth - 24, promptHeight - 38 - 26);
-    self.promptHint.frame = CGRectMake(16, promptHeight - 22, cardWidth - 32, 16);
+    self.textView.frame = CGRectMake(12, 38, cardWidth - 24, textCardHeight - 38 - 26);
+    self.promptHint.frame = CGRectMake(16, textCardHeight - 22, cardWidth - 32, 16);
+
+    self.styleLabel.frame = CGRectMake(16, 12, cardWidth - 32, 20);
+    self.styleView.frame = CGRectMake(12, 38, cardWidth - 24, textCardHeight - 38 - 26);
+    self.styleHint.frame = CGRectMake(16, textCardHeight - 22, cardWidth - 32, 16);
 }
 
 - (void)layoutLabel:(UILabel *)label field:(UITextField *)field cardWidth:(CGFloat)cardWidth {
     label.frame = CGRectMake(16, 0, 110, 48);
     field.frame = CGRectMake(130, 0, cardWidth - 130 - 14, 48);
+}
+
+- (NSString *)maskedKey:(NSString *)key {
+    if (key.length <= 8) return @"••••••••";
+    return [NSString stringWithFormat:@"%@••••%@",
+            [key substringToIndex:6],
+            [key substringFromIndex:key.length - 4]];
+}
+
+- (void)refreshModelLabel {
+    self.modelValueLabel.text = [NSString stringWithFormat:@"%@ ›", [AISettings model]];
+}
+
+- (void)modelTapped {
+    UIAlertController *sheet = [UIAlertController alertControllerWithTitle:@"选择模型"
+                                                                   message:nil
+                                                            preferredStyle:UIAlertControllerStyleActionSheet];
+    NSArray *models = @[@"deepseek-v4-flash", @"deepseek-v4-pro"];
+    for (NSString *modelName in models) {
+        [sheet addAction:[UIAlertAction actionWithTitle:modelName
+                                                 style:UIAlertActionStyleDefault
+                                               handler:^(UIAlertAction *action) {
+            [AISettings setModel:modelName];
+            [self refreshModelLabel];
+        }]];
+    }
+    [sheet addAction:[UIAlertAction actionWithTitle:@"自定义…"
+                                             style:UIAlertActionStyleDefault
+                                           handler:^(UIAlertAction *action) {
+        [self promptCustomModel];
+    }]];
+    [sheet addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+
+    // iPad 上 action sheet 需要锚点
+    if (sheet.popoverPresentationController) {
+        sheet.popoverPresentationController.sourceView = self.modelCard;
+        sheet.popoverPresentationController.sourceRect = self.modelCard.bounds;
+    }
+    [self presentViewController:sheet animated:YES completion:nil];
+}
+
+- (void)promptCustomModel {
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"自定义模型"
+                                                                   message:@"输入完整模型名（需你的 API 支持）"
+                                                            preferredStyle:UIAlertControllerStyleAlert];
+    [alert addTextFieldWithConfigurationHandler:^(UITextField *textField) {
+        textField.text = [AISettings model];
+        textField.autocapitalizationType = UITextAutocapitalizationTypeNone;
+        textField.autocorrectionType = UITextAutocorrectionTypeNo;
+    }];
+    [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"确定"
+                                             style:UIAlertActionStyleDefault
+                                           handler:^(UIAlertAction *action) {
+        NSString *name = [alert.textFields.firstObject.text
+                          stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+        if (name.length > 0) {
+            [AISettings setModel:name];
+            [self refreshModelLabel];
+        }
+    }]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+
+- (void)textFieldDidBeginEditing:(UITextField *)textField {
+    if (textField == self.apiKeyField && !self.editingKey) {
+        self.editingKey = YES;
+        if (self.apiKeyReal.length > 0) {
+            textField.text = self.apiKeyReal;
+        }
+    }
+}
+
+- (void)textFieldDidEndEditing:(UITextField *)textField {
+    if (textField == self.apiKeyField) {
+        self.editingKey = NO;
+        self.apiKeyReal = textField.text;
+        textField.text = [self maskedKey:self.apiKeyReal];
+    }
 }
 
 - (void)keyboardWillShow:(NSNotification *)note {
@@ -234,21 +355,26 @@ static UITextField *makeRowField(NSString *placeholder) {
 }
 
 - (void)saveTapped {
+    NSString *key = self.editingKey ? self.apiKeyField.text : self.apiKeyReal;
     [AISettings setEnabled:self.enabledSwitch.on];
-    [AISettings setApiKey:self.apiKeyField.text];
-    [AISettings setModel:self.modelField.text];
+    [AISettings setApiKey:key];
     double delay = [self.delayField.text doubleValue];
     [AISettings setReplyDelay:(delay > 0 && delay <= 30) ? delay : kAIReplyDelaySeconds];
     [AISettings setAutoSystemPrompt:self.textView.text];
+    [AISettings setStyleSamples:self.styleView.text];
     [self dismissOrPop];
 }
 
 - (void)resetTapped {
     self.enabledSwitch.on = YES;
-    self.apiKeyField.text = kAIAPIKey;
-    self.modelField.text = kAIModel;
+    self.apiKeyReal = kAIAPIKey;
+    self.apiKeyField.text = [self maskedKey:kAIAPIKey];
+    self.editingKey = NO;
+    [AISettings setModel:kAIModel];
+    [self refreshModelLabel];
     self.delayField.text = [NSString stringWithFormat:@"%.1f", kAIReplyDelaySeconds];
     self.textView.text = kAIAutoSystemPrompt;
+    self.styleView.text = @"";
 }
 
 @end

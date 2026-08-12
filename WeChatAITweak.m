@@ -215,12 +215,12 @@ static void *kAISwitchChatKey = &kAISwitchChatKey;  // 开关 -> chatId
         [self syncContextAccount];
 
         if (![wrap isKindOfClass:NSClassFromString(@"CMessageWrap")]) return;
-        if ([wrap m_uiMessageType] != 1) return; // 1 = 文本消息
+        unsigned int msgType = [wrap m_uiMessageType];
 
         NSString *content = [wrap m_nsContent];
         NSString *fromUsr = [wrap m_nsFromUsr];
         NSString *toUsr = [wrap m_nsToUsr];
-        if (content.length == 0 || fromUsr.length == 0) return;
+        if (fromUsr.length == 0) return;
 
         // 新旧收消息 hook 可能同时触发，去重
         if (isDuplicateMessage(wrap)) return;
@@ -238,6 +238,15 @@ static void *kAISwitchChatKey = &kAISwitchChatKey;  // 开关 -> chatId
 
         // 白名单过滤：不在白名单里的会话直接忽略（不读取内容）
         if (!isChatAllowed(chatId)) return;
+
+        // 非文本消息（图片/语音/视频/表情/位置/文件）：不自动回复，
+        // 只记一条占位符，让 AI 知道对方发过媒体但不编造看不到的内容
+        if (msgType != 1) {
+            [self recordMediaPlaceholder:msgType isSelf:isSelf chatId:chatId];
+            return;
+        }
+
+        if (content.length == 0) return;
 
         // 自己发的消息：先识别 @AI 命令；不是命令则记进上下文（8.0.5x 没有发送 hook，靠回显记录）
         if (isSelf) {
@@ -277,6 +286,34 @@ static void *kAISwitchChatKey = &kAISwitchChatKey;  // 开关 -> chatId
     } @catch (NSException *exception) {
         NSLog(kAITweakLogPrefix "处理消息异常: %@", exception);
     }
+}
+
+// 媒体消息占位：只记“发了什么类型”，不记内容、不回复
++ (void)recordMediaPlaceholder:(unsigned int)msgType isSelf:(BOOL)isSelf chatId:(NSString *)chatId {
+    NSString *name = nil;
+    switch (msgType) {
+        case 3:  name = @"图片"; break;
+        case 34: name = @"语音"; break;
+        case 43: name = @"视频"; break;
+        case 47: name = @"表情"; break;
+        case 48: name = @"位置"; break;
+        case 49: name = @"文件/链接"; break;
+        default: return; // 系统消息、拍一拍等一律不记录
+    }
+    if (![AISettings enabled]) return;
+    BOOL isGroup = [chatId containsString:@"@chatroom"];
+    if (![AISettings chatEnabled:chatId defaultEnabled:!isGroup]) return;
+    if (isSelf && !isAutoMode()) return; // 自己发的媒体只在自动模式下记（和文本一致）
+
+    NSString *placeholder = isSelf
+        ? [NSString stringWithFormat:@"（我发了一条%@消息，内容未知）", name]
+        : [NSString stringWithFormat:@"（对方发了一条%@消息，内容未知）", name];
+    if (isSelf) {
+        [[AIContext shared] appendAssistant:placeholder chatId:chatId];
+    } else {
+        [[AIContext shared] appendUser:placeholder chatId:chatId];
+    }
+    NSLog(kAITweakLogPrefix "记录媒体占位符(%@): %@", name, chatId);
 }
 
 + (void)handleTriggerMessage:(NSString *)content chatId:(NSString *)chatId {
@@ -345,7 +382,9 @@ static void *kAISwitchChatKey = &kAISwitchChatKey;  // 开关 -> chatId
             }
             if (error) {
                 NSLog(kAITweakLogPrefix "AI 请求失败: %@", error);
-                [self sendReply:@"🤖 AI 暂时开小差了，请稍后再试。" chatId:chatId];
+                // 错误信息只弹窗提示用户本人，绝不发给聊天对象
+                [self presentAlertWithTitle:@"AI 回复失败"
+                                    message:@"请求 DeepSeek 失败（网络异常、API Key 错误或余额不足），本次没有发送任何回复。请检查后重试。"];
                 return;
             }
             [[AIContext shared] appendAssistant:reply chatId:chatId];
@@ -416,7 +455,9 @@ static void *kAISwitchChatKey = &kAISwitchChatKey;  // 开关 -> chatId
             }
             if (error) {
                 NSLog(kAITweakLogPrefix "自动回复失败: %@", error);
-                [self sendReply:@"⚠️ AI 调用失败（请检查 API Key / 网络 / 余额）" chatId:chatId];
+                // 错误信息绝不发给聊天对象，只在用户手机上弹窗
+                [self presentAlertWithTitle:@"AI 自动回复失败"
+                                    message:@"请求 DeepSeek 失败（网络异常或余额不足），本次没有发送任何回复。"];
                 return;
             }
             // 模拟打字：按字数算时间（0.15 秒/字，0.8~8 秒）+ 0~1.5 秒随机波动
