@@ -31,6 +31,11 @@
 - (void)AsyncOnAddMsg:(id)arg1 MsgWrap:(CMessageWrap *)wrap;
 - (void)MainThreadNotifyToExt:(NSDictionary *)ext;
 - (void)SendTextMessage:(NSString *)content toUsrName:(NSString *)usrName;
+- (void)SendMessage:(id)msgWrap isSendByWeChat:(BOOL)flag;
+@end
+
+@interface WCMessageService : NSObject
+- (void)SendMessage:(id)msgWrap isSendByWeChat:(BOOL)flag;
 @end
 
 @interface CContact : NSObject
@@ -235,6 +240,16 @@ static BOOL g_sendingReply = NO;
             return;
         }
 
+        // 本地命令：链路测试 / 状态（不调用 API）
+        if ([question isEqualToString:@"测试"] || [question isEqualToString:@"test"]) {
+            [self handleCommand:@"test" chatId:chatId];
+            return;
+        }
+        if ([question isEqualToString:@"状态"] || [question isEqualToString:@"status"]) {
+            [self handleCommand:@"status" chatId:chatId];
+            return;
+        }
+
         if (question.length == 0) {
             [self sendReply:@"请在 @AI 后加上你的问题，例如：@AI 帮我写一段冒泡排序" chatId:chatId];
             return;
@@ -352,14 +367,17 @@ static BOOL g_sendingReply = NO;
         [[AIContext shared] clearChat:chatId];
         [self sendReply:@"✅ 上下文已清空" chatId:chatId];
     } else if ([command isEqualToString:@"test"]) {
-        // 本地链路测试：不调用 API，能收到并回这条就说明收/发 hook 都正常
+        // 本地链路测试：不调用 API。弹窗 = 收消息正常；消息回复 = 发送正常
+        [self presentAlertWithTitle:@"链路测试"
+                            message:@"✅ 已收到命令（收消息正常）\n如果同时收到一条“插件链路正常”的消息，说明发送也正常；只有弹窗没有消息，则是发送接口问题。"];
         [self sendReply:@"✅ 收到，插件链路正常（本地测试，未调用 API）" chatId:chatId];
     } else if ([command isEqualToString:@"status"]) {
-        [self sendStatusReply:chatId];
+        // 状态用弹窗展示，不依赖发送链路
+        [self presentAlertWithTitle:@"微信 AI 状态" message:[self statusString]];
     }
 }
 
-+ (void)sendStatusReply:(NSString *)chatId {
++ (NSString *)statusString {
     NSString *mode = isAutoMode() ? @"auto（自动代替聊天）" : @"trigger（@AI 触发）";
 
     NSString *keyMasked = @"未填/过短";
@@ -374,15 +392,28 @@ static BOOL g_sendingReply = NO;
                           [NSCharacterSet whitespaceAndNewlineCharacterSet]];
     NSString *whiteDesc = whiteRaw.length == 0 ? @"全部会话" : whiteRaw;
 
-    NSString *status = [NSString stringWithFormat:
+    return [NSString stringWithFormat:
         @"🤖 微信 AI v%@\n模式：%@\nhook：收消息Async %@ / 收消息Ext %@ / 发送 %@\nAPI Key：%@\n白名单：%@",
         kAITweakVersion, mode,
         g_hookAsync ? @"✓" : @"✗",
         g_hookExt ? @"✓" : @"✗",
         g_hookSend ? @"✓" : @"✗",
         keyMasked, whiteDesc];
+}
 
-    [self sendReply:status chatId:chatId];
++ (void)presentAlertWithTitle:(NSString *)title message:(NSString *)message {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        UIViewController *top = tweakTopViewController();
+        if (!top) {
+            NSLog(kAITweakLogPrefix "找不到窗口，无法弹窗");
+            return;
+        }
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:title
+                                                                      message:message
+                                                               preferredStyle:UIAlertControllerStyleAlert];
+        [alert addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
+        [top presentViewController:alert animated:YES completion:nil];
+    });
 }
 
 + (void)sendReply:(NSString *)text chatId:(NSString *)chatId {
@@ -394,14 +425,44 @@ static BOOL g_sendingReply = NO;
             NSLog(kAITweakLogPrefix "获取 CMessageMgr 失败");
             return;
         }
-        if (![mgr respondsToSelector:@selector(SendTextMessage:toUsrName:)]) {
-            NSLog(kAITweakLogPrefix "当前微信版本没有 SendTextMessage:toUsrName:，需要更新接口");
-            return;
+        // 尝试多种发送接口：老版 SendTextMessage → 新版 SendMessage:isSendByWeChat:
+        BOOL sent = NO;
+
+        if ([mgr respondsToSelector:@selector(SendTextMessage:toUsrName:)]) {
+            g_sendingReply = YES;
+            [mgr SendTextMessage:text toUsrName:chatId];
+            g_sendingReply = NO;
+            sent = YES;
+        } else {
+            // 构造一个文本消息对象，走新版发送接口
+            CMessageWrap *wrap = [[NSClassFromString(@"CMessageWrap") alloc] init];
+            if (wrap) {
+                [wrap setM_nsContent:text];
+                [wrap setM_nsToUsr:chatId];
+                [wrap setM_uiMessageType:1];
+
+                id service = mgr;
+                Class serviceCls = NSClassFromString(@"WCMessageService");
+                Class centerCls = NSClassFromString(@"MMServiceCenter");
+                id center = centerCls ? [(id)centerCls defaultCenter] : nil;
+                if (serviceCls && center) {
+                    id s = [center getService:serviceCls];
+                    if (s) service = s;
+                }
+                if ([service respondsToSelector:@selector(SendMessage:isSendByWeChat:)]) {
+                    [service SendMessage:wrap isSendByWeChat:YES];
+                    sent = YES;
+                }
+            }
         }
-        g_sendingReply = YES;
-        [mgr SendTextMessage:text toUsrName:chatId];
-        g_sendingReply = NO;
-        NSLog(kAITweakLogPrefix "已发送回复到 %@", chatId);
+
+        if (sent) {
+            NSLog(kAITweakLogPrefix "已发送回复到 %@", chatId);
+        } else {
+            NSLog(kAITweakLogPrefix "所有发送接口都不支持，回复发送失败 (chat: %@)", chatId);
+            [self presentAlertWithTitle:@"发送失败"
+                                message:@"当前微信版本没有可用的发送接口，需要适配（请把微信版本号告诉作者）"];
+        }
     };
 
     if ([NSThread isMainThread]) {
