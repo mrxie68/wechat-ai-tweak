@@ -7,6 +7,8 @@
 @property (nonatomic, strong) UIButton *resetButton;
 @property (nonatomic, strong) UITextField *apiKeyField;
 @property (nonatomic, strong) UITextField *modelField;
+@property (nonatomic, strong) UISwitch *enabledSwitch;
+@property (nonatomic, strong) UILabel *enabledLabel;
 @end
 
 @implementation AIPromptEditorViewController
@@ -28,6 +30,15 @@
                                                             target:self
                                                             action:@selector(saveTapped)];
     self.navigationItem.rightBarButtonItem = save;
+
+    self.enabledLabel = [[UILabel alloc] initWithFrame:CGRectMake(0, 0, 0, 0)];
+    self.enabledLabel.text = @"机器人开关";
+    self.enabledLabel.font = [UIFont systemFontOfSize:15];
+    [self.view addSubview:self.enabledLabel];
+
+    self.enabledSwitch = [[UISwitch alloc] initWithFrame:CGRectMake(0, 0, 0, 0)];
+    self.enabledSwitch.on = [AISettings enabled];
+    [self.view addSubview:self.enabledSwitch];
 
     self.apiKeyField = [[UITextField alloc] initWithFrame:CGRectMake(0, 0, 0, 0)];
     self.apiKeyField.placeholder = @"API Key（sk- 开头）";
@@ -65,9 +76,11 @@
 
     CGFloat width = self.view.bounds.size.width;
     CGFloat height = self.view.bounds.size.height;
-    self.apiKeyField.frame = CGRectMake(12, 12, width - 24, 40);
-    self.modelField.frame = CGRectMake(12, 60, width - 24, 40);
-    self.textView.frame = CGRectMake(12, 108, width - 24, height - 108 - 90);
+    self.enabledLabel.frame = CGRectMake(12, 16, 120, 36);
+    self.enabledSwitch.frame = CGRectMake(width - 72, 18, 60, 30);
+    self.apiKeyField.frame = CGRectMake(12, 64, width - 24, 40);
+    self.modelField.frame = CGRectMake(12, 112, width - 24, 40);
+    self.textView.frame = CGRectMake(12, 160, width - 24, height - 160 - 90);
     self.resetButton.frame = CGRectMake(12, height - 90, width - 24, 44);
 }
 
@@ -76,6 +89,7 @@
 }
 
 - (void)saveTapped {
+    [AISettings setEnabled:self.enabledSwitch.on];
     [AISettings setApiKey:self.apiKeyField.text];
     [AISettings setModel:self.modelField.text];
     [AISettings setAutoSystemPrompt:self.textView.text];
@@ -83,6 +97,7 @@
 }
 
 - (void)resetTapped {
+    self.enabledSwitch.on = YES;
     self.apiKeyField.text = kAIAPIKey;
     self.modelField.text = kAIModel;
     self.textView.text = kAIAutoSystemPrompt;

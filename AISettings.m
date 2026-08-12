@@ -4,6 +4,7 @@
 static NSString * const kAISettingsAutoPromptKey = @"WeChatAIAutoSystemPrompt";
 static NSString * const kAISettingsAPIKeyKey = @"WeChatAIAPIKey";
 static NSString * const kAISettingsModelKey = @"WeChatAIModel";
+static NSString * const kAISettingsEnabledKey = @"WeChatAIEnabled";
 
 @implementation AISettings
 
@@ -52,6 +53,18 @@ static NSString * const kAISettingsModelKey = @"WeChatAIModel";
     } else {
         [defaults removeObjectForKey:kAISettingsModelKey];
     }
+    [defaults synchronize];
+}
+
++ (BOOL)enabled {
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    if ([defaults objectForKey:kAISettingsEnabledKey] == nil) return YES; // 默认开
+    return [defaults boolForKey:kAISettingsEnabledKey];
+}
+
++ (void)setEnabled:(BOOL)enabled {
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    [defaults setBool:enabled forKey:kAISettingsEnabledKey];
     [defaults synchronize];
 }
 

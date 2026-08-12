@@ -203,11 +203,15 @@ static BOOL g_sendingReply = NO;
 
         // 自己发的消息：先识别 @AI 命令；不是命令则记进上下文（8.0.5x 没有发送 hook，靠回显记录）
         if (isSelf) {
-            if (![self handlePossibleCommand:content chatId:chatId] && isAutoMode()) {
+            if ([self handlePossibleCommand:content chatId:chatId]) return;
+            if ([AISettings enabled] && isAutoMode()) {
                 [[AIContext shared] appendAssistant:content chatId:chatId];
             }
             return;
         }
+
+        // 机器人总开关：关闭时别人的消息一律不处理（管理命令只对“自己发的”生效）
+        if (![AISettings enabled]) return;
 
         BOOL autoMode = isAutoMode();
 
@@ -403,8 +407,9 @@ static BOOL g_sendingReply = NO;
     NSString *whiteDesc = whiteRaw.length == 0 ? @"全部会话" : whiteRaw;
 
     return [NSString stringWithFormat:
-        @"🤖 微信 AI v%@\n模式：%@\n模型：%@\nhook：收消息Async %@ / 收消息Ext %@ / 发送 %@\nAPI Key：%@\n白名单：%@",
-        kAITweakVersion, mode, [AISettings model],
+        @"🤖 微信 AI v%@\n开关：%@\n模式：%@\n模型：%@\nhook：收消息Async %@ / 收消息Ext %@ / 发送 %@\nAPI Key：%@\n白名单：%@",
+        kAITweakVersion, [AISettings enabled] ? @"开" : @"关",
+        mode, [AISettings model],
         g_hookAsync ? @"✓" : @"✗",
         g_hookExt ? @"✓" : @"✗",
         g_hookSend ? @"✓" : @"✗",
