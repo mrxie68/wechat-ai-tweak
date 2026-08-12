@@ -966,9 +966,13 @@ static BOOL g_aiSending = NO;  // 插件自己发消息期间为 YES，发送 ho
     NSString *whiteRaw = [kAIAllowedChats stringByTrimmingCharactersInSet:
                           [NSCharacterSet whitespaceAndNewlineCharacterSet]];
     NSString *whiteDesc = whiteRaw.length == 0 ? @"全部会话" : whiteRaw;
+    NSUInteger fsCount = [AIAPIClient fewShotMessageCount];
+    NSString *sampleDesc = fsCount > 0
+        ? [NSString stringWithFormat:@"Few-Shot %lu条", (unsigned long)fsCount]
+        : @"纯文本兜底";
 
     return [NSString stringWithFormat:
-        @"🤖 微信 AI v%@\n总开关：%@\n模式：%@\n模型：%@\n延迟：%.1f秒\nhook：收消息Async %@ / 收消息Ext %@ / 发送 %@\nwcplugins：%@\nAPI Key：%@\n白名单：%@\n风格档案：%ld 个好友",
+        @"🤖 微信 AI v%@\n总开关：%@\n模式：%@\n模型：%@\n延迟：%.1f秒\nhook：收消息Async %@ / 收消息Ext %@ / 发送 %@\nwcplugins：%@\nAPI Key：%@\n白名单：%@\n风格样本：%@\n风格档案：%ld 个好友",
         kAITweakVersion, [AISettings enabled] ? @"开" : @"关",
         mode, [AISettings model],
         [AISettings replyDelay],
@@ -976,7 +980,7 @@ static BOOL g_aiSending = NO;  // 插件自己发消息期间为 YES，发送 ho
         g_hookExt ? @"✓" : @"✗",
         g_hookSend ? @"✓" : @"✗",
         g_wcpluginsClassFound ? (g_wcpluginsRegistered ? (g_wcpluginsControllerRegistered ? @"wcplugins ✓ 设置页已注册" : @"wcplugins ✓ 开关已注册") : @"wcplugins ✗ 未注册成功") : @"未装 wcplugins",
-        keyMasked, whiteDesc, (long)[AISettings styleProfileCount]];
+        keyMasked, whiteDesc, sampleDesc, (long)[AISettings styleProfileCount]];
 }
 
 + (void)presentAlertWithTitle:(NSString *)title message:(NSString *)message {

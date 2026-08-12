@@ -2,6 +2,7 @@
 #import "AISettings.h"
 #import "AIConfig.h"
 #import "AIContext.h"
+#import "AIAPIClient.h"
 
 // 状态字符串由 WeChatAIHandler 提供（同一个 dylib 内，无需头文件）
 @interface WeChatAIHandler : NSObject
@@ -454,7 +455,88 @@ static UITextField *makeRowField(NSString *placeholder) {
                                                                    message:[statusText stringByAppendingString:@"\n\n（完整内容已复制到剪贴板，直接粘贴发我）"]
                                                             preferredStyle:UIAlertControllerStyleAlert];
     [alert addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"测试对话"
+                                             style:UIAlertActionStyleDefault
+                                           handler:^(UIAlertAction *action) {
+        [self runTestConversation];
+    }]];
     [self presentViewController:alert animated:YES completion:nil];
+}
+
+// AI 状态里的“测试对话”：走真实的 DeepSeek 请求，验证 Key/模型/参数/Few-Shot/网络全链路
+- (void)runTestConversation {
+    if ([AISettings apiKey].length == 0) {
+        UIAlertController *warn = [UIAlertController alertControllerWithTitle:@"未配置 API Key"
+                                                                     message:@"请先在设置页的 API Key 一栏填入 DeepSeek Key 再测试。"
+                                                              preferredStyle:UIAlertControllerStyleAlert];
+        [warn addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
+        [self presentViewController:warn animated:YES completion:nil];
+        return;
+    }
+
+    UIAlertController *progress = [UIAlertController alertControllerWithTitle:@"正在测试对话"
+                                                                     message:@"正在连接 DeepSeek 验证配置…"
+                                                              preferredStyle:UIAlertControllerStyleAlert];
+    UIActivityIndicatorView *spinner = [[UIActivityIndicatorView alloc]
+                                        initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleMedium];
+    spinner.translatesAutoresizingMaskIntoConstraints = NO;
+    [spinner startAnimating];
+    [progress.view addSubview:spinner];
+    NSDictionary *views = @{@"spinner": spinner};
+    [progress.view addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"V:[spinner]-16-|"
+                                                                         options:0 metrics:nil views:views]];
+    [progress.view addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"H:[spinner]-12-|"
+                                                                         options:0 metrics:nil views:views]];
+    [self presentViewController:progress animated:NO completion:nil];
+
+    NSArray *history = @[@{@"role": @"user", @"content": @"在吗？测试一下，简单回一句就行。"}];
+    [[AIAPIClient shared] sendMessages:history
+                          systemPrompt:[AISettings autoSystemPrompt]
+                          styleProfile:nil
+                          userProfile:[AISettings userProfile]
+                          fewShotEnabled:YES
+                            completion:^(NSString *reply, NSError *error) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [progress dismissViewControllerAnimated:NO completion:^{
+                if (error) {
+                    NSString *desc = error.localizedDescription ?: @"未知错误";
+                    NSString *hint = @"";
+                    if ([desc containsString:@"401"]) {
+                        hint = @"\n\n大概率是 API Key 无效，去 DeepSeek 后台检查。";
+                    } else if ([desc containsString:@"402"] || [desc containsString:@"余额"] ||
+                               [desc containsString:@"insufficient"]) {
+                        hint = @"\n\n大概率是余额不足。";
+                    } else if ([desc containsString:@"timeout"] || [desc containsString:@"Timed out"]) {
+                        hint = @"\n\n网络超时，检查网络后重试。";
+                    }
+                    UIAlertController *fail = [UIAlertController alertControllerWithTitle:@"❌ 测试失败"
+                                                                                 message:[NSString stringWithFormat:@"原因：%@%@", desc, hint]
+                                                                          preferredStyle:UIAlertControllerStyleAlert];
+                    [fail addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
+                    [self presentViewController:fail animated:YES completion:nil];
+                    return;
+                }
+
+                NSUInteger fsCount = [AIAPIClient fewShotMessageCount];
+                NSString *fsDesc = fsCount > 0
+                    ? [NSString stringWithFormat:@"%lu 条（%lu 组）",
+                       (unsigned long)fsCount, (unsigned long)fsCount / 2]
+                    : @"0 条（旧格式纯文本兜底）";
+                NSString *okMsg = [NSString stringWithFormat:
+                    @"AI 回复：%@\n\n参数检查：\n模型 %@\n温度 %.2f / 频率惩罚 %.2f / 存在惩罚 %.2f\n思考延迟 %.1f 秒 / 模拟打字 %@\nFew-Shot 样本：%@\nAPI Key：%@",
+                    reply,
+                    [AISettings model],
+                    [AISettings temperature], [AISettings frequencyPenalty], [AISettings presencePenalty],
+                    [AISettings replyDelay], [AISettings typingSimulation] ? @"开" : @"关",
+                    fsDesc, [self maskedKey:[AISettings apiKey]]];
+                UIAlertController *ok = [UIAlertController alertControllerWithTitle:@"✅ 测试成功"
+                                                                           message:okMsg
+                                                                    preferredStyle:UIAlertControllerStyleAlert];
+                [ok addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
+                [self presentViewController:ok animated:YES completion:nil];
+            }];
+        });
+    }];
 }
 
 - (void)modeTapped {

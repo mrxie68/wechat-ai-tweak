@@ -42,6 +42,10 @@ static NSArray<NSDictionary *> *aiParseFewShotSamples(NSString *samples, NSUInte
     return msgs;
 }
 
++ (NSUInteger)fewShotMessageCount {
+    return aiParseFewShotSamples([AISettings styleSamples], 4).count;
+}
+
 - (void)sendMessages:(NSArray<NSDictionary *> *)messages
          systemPrompt:(NSString *)systemPrompt
          styleProfile:(NSString *)styleProfile
@@ -111,6 +115,19 @@ static NSArray<NSDictionary *> *aiParseFewShotSamples(NSString *samples, NSUInte
 
         NSHTTPURLResponse *http = (NSHTTPURLResponse *)response;
         NSLog(kAITweakLogPrefix "API HTTP 状态: %ld", (long)http.statusCode);
+        // HTTP 错误（401 Key 无效 / 402 余额不足 / 429 限流…）带状态码返回，便于弹窗精确提示
+        if (http.statusCode >= 400) {
+            NSString *errMsg = [NSString stringWithFormat:@"HTTP %ld", (long)http.statusCode];
+            NSDictionary *errJson = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+            NSString *apiMsg = errJson[@"error"][@"message"];
+            if (apiMsg.length > 0) {
+                errMsg = [errMsg stringByAppendingFormat:@"：%@", apiMsg];
+            }
+            completion(nil, [NSError errorWithDomain:@"WeChatAI"
+                                                code:http.statusCode
+                                            userInfo:@{NSLocalizedDescriptionKey: errMsg}]);
+            return;
+        }
 
         NSDictionary *json = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
         NSString *reply = json[@"choices"][0][@"message"][@"content"];
