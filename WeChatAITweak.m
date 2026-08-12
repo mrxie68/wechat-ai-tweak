@@ -51,6 +51,7 @@
 // 界面诊断（临时功能）：识别聊天信息页类名
 @interface AIDiagnostics : NSObject
 + (void)inspectViewController:(UIViewController *)viewController;
++ (UITableView *)findTableViewInView:(UIView *)view;
 @end
 
 @interface CContact : NSObject
