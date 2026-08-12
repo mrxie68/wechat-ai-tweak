@@ -42,6 +42,44 @@ static NSString * const kAISettingsChatOverridesKey = @"WeChatAIChatOverrides";
     [defaults synchronize];
 }
 
++ (NSString *)styleProfileForChat:(NSString *)chatId {
+    if (chatId.length == 0) return @"";
+    return [[NSUserDefaults standardUserDefaults] stringForKey:
+            [NSString stringWithFormat:@"%@%@", @"WeChatAIStyleProfile_", chatId]] ?: @"";
+}
+
++ (void)setStyleProfile:(NSString *)profile forChat:(NSString *)chatId {
+    if (chatId.length == 0) return;
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    NSString *key = [NSString stringWithFormat:@"%@%@", @"WeChatAIStyleProfile_", chatId];
+    if (profile.length > 0) {
+        if (profile.length > 2500) {
+            profile = [profile substringToIndex:2500];
+        }
+        [defaults setObject:profile forKey:key];
+    } else {
+        [defaults removeObjectForKey:key];
+    }
+    [defaults synchronize];
+}
+
++ (void)clearStyleProfileForChat:(NSString *)chatId {
+    if (chatId.length == 0) return;
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    [defaults removeObjectForKey:
+     [NSString stringWithFormat:@"%@%@", @"WeChatAIStyleProfile_", chatId]];
+    [defaults synchronize];
+}
+
++ (NSInteger)styleProfileCount {
+    NSDictionary *all = [[NSUserDefaults standardUserDefaults] dictionaryRepresentation];
+    NSInteger count = 0;
+    for (NSString *key in all) {
+        if ([key hasPrefix:@"WeChatAIStyleProfile_"]) count++;
+    }
+    return count;
+}
+
 + (NSString *)apiKey {
     NSString *stored = [[NSUserDefaults standardUserDefaults] stringForKey:kAISettingsAPIKeyKey];
     if (stored.length > 0) return stored;

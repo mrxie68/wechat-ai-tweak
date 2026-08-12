@@ -7,6 +7,10 @@
 + (void)setAutoSystemPrompt:(NSString *)prompt; // 传空则恢复默认
 + (NSString *)styleSamples;            // 聊天风格样本（可空，AI 会模仿这里的语气）
 + (void)setStyleSamples:(NSString *)samples;
++ (NSString *)styleProfileForChat:(NSString *)chatId;  // 自动学习的风格档案（按好友存）
++ (void)setStyleProfile:(NSString *)profile forChat:(NSString *)chatId;
++ (void)clearStyleProfileForChat:(NSString *)chatId;
++ (NSInteger)styleProfileCount;        // 已学习的好友数量（状态里显示）
 + (NSString *)apiKey;                  // 同理
 + (void)setApiKey:(NSString *)key;
 + (NSString *)model;

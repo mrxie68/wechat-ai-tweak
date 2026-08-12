@@ -15,6 +15,7 @@
 
 - (void)sendMessages:(NSArray<NSDictionary *> *)messages
          systemPrompt:(NSString *)systemPrompt
+         styleProfile:(NSString *)styleProfile
           completion:(void (^)(NSString *, NSError *))completion {
 
     NSURL *url = [NSURL URLWithString:[kAIBaseURL stringByAppendingString:@"/chat/completions"]];
@@ -31,6 +32,10 @@
     if (samples.length > 0) {
         finalPrompt = [finalPrompt stringByAppendingFormat:
             @"\n\n【你的真实聊天风格样本，请模仿这里的语气、用词和习惯来回复】\n%@", samples];
+    }
+    if (styleProfile.length > 0) {
+        finalPrompt = [finalPrompt stringByAppendingFormat:
+            @"\n\n【你与这位好友聊天时的风格档案，请严格按这个风格说话】\n%@", styleProfile];
     }
     if (finalPrompt.length > 0) {
         [payload addObject:@{@"role": @"system", @"content": finalPrompt}];

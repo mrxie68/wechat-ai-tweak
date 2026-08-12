@@ -128,6 +128,57 @@ static BOOL isChatAllowed(NSString *chatId) {
     return NO;
 }
 
+// 尝试用微信自己的消息接口拉取某个会话最近几天的文字消息（运行时探测，找不到就返回空）
+static NSArray<NSString *> *fetchRecentTexts(NSString *chatId, NSInteger limit) {
+    NSMutableArray *texts = [NSMutableArray array];
+    CMessageMgr *mgr = wechatMessageMgr();
+    if (!mgr || chatId.length == 0) return texts;
+
+    // 路径 1：GetFirstMsg: / GetNextMsg:fromMsg:（同步遍历，class-dump 常见签名）
+    if ([mgr respondsToSelector:@selector(GetFirstMsg:)] &&
+        [mgr respondsToSelector:@selector(GetNextMsg:fromMsg:)]) {
+        @try {
+            id msg = [mgr GetFirstMsg:chatId];
+            NSInteger guard = 0;
+            NSInteger now = (NSInteger)time(NULL);
+            NSInteger windowStart = now - 3 * 24 * 3600; // 最近 3 天
+            while (msg && guard < 3000) {
+                guard++;
+                NSInteger type = 0;
+                if ([msg respondsToSelector:@selector(m_uiMessageType)]) {
+                    type = [msg m_uiMessageType];
+                }
+                if (type == 1) {
+                    NSString *content = [msg m_nsContent] ?: @"";
+                    if (content.length > 0 && ![content hasPrefix:@"<msg"]) {
+                        NSInteger t = 0;
+                        if ([msg respondsToSelector:@selector(m_uiCreateTime)]) {
+                            t = [msg m_uiCreateTime];
+                        }
+                        if (t >= windowStart && t <= now) {
+                            [texts addObject:content];
+                        }
+                    }
+                }
+                id next = [mgr GetNextMsg:chatId fromMsg:msg];
+                if (!next || next == msg) break;
+                msg = next;
+            }
+            NSLog(kAITweakLogPrefix "历史消息拉取成功（GetFirstMsg 路径），%lu 条", (unsigned long)texts.count);
+        } @catch (NSException *exception) {
+            [texts removeAllObjects];
+            NSLog(kAITweakLogPrefix "GetFirstMsg 路径异常: %@", exception);
+        }
+    } else {
+        NSLog(kAITweakLogPrefix "微信版本没有 GetFirstMsg/GetNextMsg 接口，历史记录需另寻路径");
+    }
+
+    if (texts.count > limit) {
+        [texts removeObjectsInRange:NSMakeRange(0, texts.count - limit)];
+    }
+    return texts;
+}
+
 // ===== 消息去重（新旧两条收消息 hook 同时安装，防止同一条消息处理两次）=====
 static NSObject *g_dedupLock = nil;
 static NSMutableSet *g_seenKeys = nil;
@@ -393,6 +444,7 @@ static NSMutableArray *g_recentReplyOrder = nil;
         NSUInteger replyEpoch = epoch;
         [[AIAPIClient shared] sendMessages:history
                               systemPrompt:kAISystemPrompt
+                              styleProfile:[AISettings styleProfileForChat:chatId]
                                 completion:^(NSString *reply, NSError *error) {
             @synchronized (self) {
                 [g_inFlightChats removeObject:chatId];
@@ -466,6 +518,7 @@ static NSMutableArray *g_recentReplyOrder = nil;
         NSUInteger replyEpoch = epoch;
         [[AIAPIClient shared] sendMessages:history
                               systemPrompt:[AISettings autoSystemPrompt]
+                              styleProfile:[AISettings styleProfileForChat:chatId]
                                 completion:^(NSString *reply, NSError *error) {
             @synchronized (self) {
                 [g_inFlightChats removeObject:chatId];
@@ -543,7 +596,7 @@ static NSMutableArray *g_recentReplyOrder = nil;
     NSString *whiteDesc = whiteRaw.length == 0 ? @"全部会话" : whiteRaw;
 
     return [NSString stringWithFormat:
-        @"🤖 微信 AI v%@\n总开关：%@\n模式：%@\n模型：%@\n延迟：%.1f秒\nhook：收消息Async %@ / 收消息Ext %@ / 发送 %@\nwcplugins：%@\nAPI Key：%@\n白名单：%@",
+        @"🤖 微信 AI v%@\n总开关：%@\n模式：%@\n模型：%@\n延迟：%.1f秒\nhook：收消息Async %@ / 收消息Ext %@ / 发送 %@\nwcplugins：%@\nAPI Key：%@\n白名单：%@\n风格档案：%ld 个好友",
         kAITweakVersion, [AISettings enabled] ? @"开" : @"关",
         mode, [AISettings model],
         [AISettings replyDelay],
@@ -551,7 +604,7 @@ static NSMutableArray *g_recentReplyOrder = nil;
         g_hookExt ? @"✓" : @"✗",
         g_hookSend ? @"✓" : @"✗",
         g_wcpluginsClassFound ? (g_wcpluginsRegistered ? (g_wcpluginsControllerRegistered ? @"wcplugins ✓ 设置页已注册" : @"wcplugins ✓ 开关已注册") : @"wcplugins ✗ 未注册成功") : @"未装 wcplugins",
-        keyMasked, whiteDesc];
+        keyMasked, whiteDesc, (long)[AISettings styleProfileCount]];
 }
 
 + (void)presentAlertWithTitle:(NSString *)title message:(NSString *)message {
@@ -673,6 +726,70 @@ static NSMutableArray *g_recentReplyOrder = nil;
         }]];
         [top presentViewController:alert animated:YES completion:nil];
     });
+}
+
+// 聊天信息页“学习聊天风格”：确认后拉取最近记录 → DeepSeek 总结 → 存成本地档案
++ (void)confirmLearnStyleForChat:(NSString *)chatId {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        UIViewController *top = tweakTopViewController();
+        if (!top) return;
+
+        NSString *profile = [AISettings styleProfileForChat:chatId];
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"学习聊天风格"
+                                                                       message:profile.length > 0
+            ? @"这个好友已有学习档案。可以重新学习覆盖，或清除档案。"
+            : @"将读取这个好友最近 3 天的文字聊天记录，并发送给 DeepSeek 总结你的说话风格。\n\n记录只用于本次学习，原文不会保存，只保存风格总结。确定继续？"
+                                                                preferredStyle:UIAlertControllerStyleAlert];
+        [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+        [alert addAction:[UIAlertAction actionWithTitle:profile.length > 0 ? @"重新学习" : @"开始学习"
+                                                 style:UIAlertActionStyleDefault
+                                               handler:^(UIAlertAction *action) {
+            [self learnStyleForChat:chatId];
+        }]];
+        if (profile.length > 0) {
+            [alert addAction:[UIAlertAction actionWithTitle:@"清除档案"
+                                                     style:UIAlertActionStyleDestructive
+                                                   handler:^(UIAlertAction *action) {
+                [AISettings clearStyleProfileForChat:chatId];
+                [self presentAlertWithTitle:@"已清除"
+                                    message:@"这个好友的风格档案已删除，回复恢复默认风格。"];
+            }]];
+        }
+        [top presentViewController:alert animated:YES completion:nil];
+    });
+}
+
++ (void)learnStyleForChat:(NSString *)chatId {
+    NSArray *texts = fetchRecentTexts(chatId, 200);
+    if (texts.count < 5) {
+        [self presentAlertWithTitle:@"记录太少"
+                            message:[NSString stringWithFormat:@"只找到最近 3 天的文字消息 %lu 条（至少需要 5 条才能学习）。可以稍后再试，或直接在设置页粘贴聊天记录。", (unsigned long)texts.count]];
+        return;
+    }
+
+    NSString *joined = [texts componentsJoinedByString:@"\n"];
+    NSString *learnPrompt = @"你是一名聊天风格分析师。以下是某微信用户与其好友最近的聊天记录片段（包含用户本人的消息和对方的消息，可能不按时间顺序）。请总结这位“用户本人”的说话风格：语气、常用词/口头禅、句子长短、是否爱用表情和标点、回复习惯、惯用开场或结束语。用 150~250 字的中文直接输出总结，不要客套，不要写“分析如下”之类的开头。";
+    NSArray *messages = @[@{@"role": @"user", @"content": joined}];
+
+    [[AIAPIClient shared] sendMessages:messages
+                          systemPrompt:learnPrompt
+                          styleProfile:nil
+                            completion:^(NSString *reply, NSError *error) {
+        if (error) {
+            NSLog(kAITweakLogPrefix "学习风格失败: %@", error);
+            [self presentAlertWithTitle:@"学习失败"
+                                message:@"调用 DeepSeek 失败（网络异常、API Key 错误或余额不足），请稍后重试。"];
+            return;
+        }
+        NSString *profile = [reply stringByTrimmingCharactersInSet:
+                             [NSCharacterSet whitespaceAndNewlineCharacterSet]];
+        [AISettings setStyleProfile:profile forChat:chatId];
+        NSLog(kAITweakLogPrefix "风格学习完成（%lu 条记录）: %@", (unsigned long)texts.count, chatId);
+        [self presentAlertWithTitle:@"学习完成"
+                            message:[NSString stringWithFormat:
+                                @"已保存这个好友的风格档案，之后与 ta 的对话会用你的语气回复。\n\n档案摘要：\n%@",
+                                profile.length > 200 ? [profile substringToIndex:200] : profile]];
+    }];
 }
 
 @end
@@ -832,6 +949,27 @@ static UITableViewCell *aiMakeMemoryCell(void) {
     return cell;
 }
 
+// 用微信的 MMTableViewCell 创建“学习聊天风格”行
+static UITableViewCell *aiMakeLearnCell(void) {
+    UITableViewCell *cell = nil;
+    @try {
+        Class cellClass = NSClassFromString(@"MMTableViewCell");
+        cell = [[cellClass alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:@"WeChatAILearnCell"];
+    } @catch (NSException *exception) {
+        cell = nil;
+    }
+    if (!cell) {
+        cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:@"WeChatAILearnCell"];
+    }
+    cell.textLabel.text = @"学习聊天风格";
+    cell.textLabel.font = [UIFont systemFontOfSize:17];
+    cell.textLabel.textColor = [UIColor systemBlueColor];
+    cell.backgroundColor = [UIColor whiteColor];
+    cell.contentView.backgroundColor = [UIColor whiteColor];
+    cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+    return cell;
+}
+
 static void (*orig_reloadTableData_addContact)(id, SEL);
 static void (*orig_reloadTableData_chatRoom)(id, SEL);
 static void (*orig_viewDidLoad_addContact)(id, SEL);
@@ -925,7 +1063,7 @@ static NSInteger swz_mm_numberOfRows(id self, SEL _cmd, UITableView *tableView, 
     NSInteger orig = origFn ? origFn(self, _cmd, tableView, section) : 0;
     NSDictionary *config = aiConfigForTable(tableView);
     if (config && section == 1) {
-        return orig + 2; // AI 助手开关 + 清空记忆
+        return orig + 3; // AI 助手开关 + 清空记忆 + 学习聊天风格
     }
     return orig;
 }
@@ -971,8 +1109,11 @@ static UITableViewCell *swz_mm_cellForRow(id self, SEL _cmd, UITableView *tableV
         if (indexPath.row == insertRow + 1) {
             return aiMakeMemoryCell();
         }
-        if (indexPath.row > insertRow + 1) {
-            NSIndexPath *shifted = [NSIndexPath indexPathForRow:indexPath.row - 2 inSection:indexPath.section];
+        if (indexPath.row == insertRow + 2) {
+            return aiMakeLearnCell();
+        }
+        if (indexPath.row > insertRow + 2) {
+            NSIndexPath *shifted = [NSIndexPath indexPathForRow:indexPath.row - 3 inSection:indexPath.section];
             return orig_mm_cellForRow ? orig_mm_cellForRow(self, _cmd, tableView, shifted) : nil;
         }
     }
@@ -998,8 +1139,13 @@ static void swz_mm_didSelect(id self, SEL _cmd, UITableView *tableView, NSIndexP
             [tableView deselectRowAtIndexPath:indexPath animated:YES];
             return;
         }
-        if (indexPath.row > insertRow + 1) {
-            NSIndexPath *shifted = [NSIndexPath indexPathForRow:indexPath.row - 2 inSection:indexPath.section];
+        if (indexPath.row == insertRow + 2) {
+            [WeChatAIHandler confirmLearnStyleForChat:config[@"chat"]];
+            [tableView deselectRowAtIndexPath:indexPath animated:YES];
+            return;
+        }
+        if (indexPath.row > insertRow + 2) {
+            NSIndexPath *shifted = [NSIndexPath indexPathForRow:indexPath.row - 3 inSection:indexPath.section];
             if (orig_mm_didSelect) orig_mm_didSelect(self, _cmd, tableView, shifted);
             return;
         }
@@ -1015,8 +1161,9 @@ static CGFloat swz_mm_heightForRow(id self, SEL _cmd, UITableView *tableView, NS
         NSInteger insertRow = [config[@"row"] integerValue];
         if (indexPath.row == insertRow) return 44;
         if (indexPath.row == insertRow + 1) return 44;
-        if (indexPath.row > insertRow + 1) {
-            NSIndexPath *shifted = [NSIndexPath indexPathForRow:indexPath.row - 2 inSection:indexPath.section];
+        if (indexPath.row == insertRow + 2) return 44;
+        if (indexPath.row > insertRow + 2) {
+            NSIndexPath *shifted = [NSIndexPath indexPathForRow:indexPath.row - 3 inSection:indexPath.section];
             return orig_mm_heightForRow ? orig_mm_heightForRow(self, _cmd, tableView, shifted) : 44;
         }
     }

@@ -7,6 +7,7 @@
 
 - (void)sendMessages:(NSArray<NSDictionary *> *)messages
          systemPrompt:(NSString *)systemPrompt
+         styleProfile:(NSString *)styleProfile
           completion:(void (^)(NSString *reply, NSError *error))completion;
 
 @end
