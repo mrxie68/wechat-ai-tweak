@@ -181,6 +181,8 @@ static NSMutableSet *g_inFlightChats = nil;
 static NSMutableSet *g_pendingChats = nil;
 static BOOL g_sendingReply = NO;
 static NSString *g_contextAccount = nil;
+static void *kAIConfigKey = &kAIConfigKey;          // tableView -> 页面配置
+static void *kAISwitchChatKey = &kAISwitchChatKey;  // 开关 -> chatId
 
 // 账号隔离：检测到当前微信账号变化时清空全部上下文，避免把上一个账号的对话带过去
 + (void)syncContextAccount {
@@ -612,6 +614,15 @@ static NSString *g_contextAccount = nil;
     }
 }
 
+// 聊天信息页“AI 助手”开关被拨动
++ (void)aiSwitchChanged:(UISwitch *)sender {
+    NSString *chatId = objc_getAssociatedObject(sender, &kAISwitchChatKey);
+    if (chatId.length > 0) {
+        [AISettings setChatEnabled:sender.on chatId:chatId];
+        NSLog(kAITweakLogPrefix "会话开关：%@ -> %@", chatId, sender.on ? @"开" : @"关");
+    }
+}
+
 @end
 
 #pragma mark - Hook 安装
@@ -619,8 +630,6 @@ static NSString *g_contextAccount = nil;
 static void (*orig_AsyncOnAddMsg)(id, SEL, id, CMessageWrap *);
 static void (*orig_MainThreadNotifyToExt)(id, SEL, NSDictionary *);
 static void (*orig_SendTextMessage)(id, SEL, NSString *, NSString *);
-static void (*orig_pushViewController)(id, SEL, UIViewController *, BOOL);
-static void (*orig_presentViewController)(id, SEL, UIViewController *, BOOL, void (^)(void));
 
 static void swz_AsyncOnAddMsg(id self, SEL _cmd, id arg1, CMessageWrap *wrap) {
     if (orig_AsyncOnAddMsg) {
@@ -664,26 +673,198 @@ static void swz_SendTextMessage(id self, SEL _cmd, NSString *content, NSString *
     }
 }
 
-static void swz_pushViewController(id self, SEL _cmd, UIViewController *viewController, BOOL animated) {
-    if (orig_pushViewController) {
-        orig_pushViewController(self, _cmd, viewController, animated);
+// ============================================================
+//  聊天信息页插入“AI 助手”开关行（8.0.55 适配）
+//  dataSource 是 MMTableViewInfo，直接在表格数据源层面插行
+// ============================================================
+
+// 读取该页面的配置：VC、是否群聊、chatId、插入位置
+static NSDictionary *aiBuildConfigForVC(UIViewController *vc, UITableView *tableView) {
+    NSString *className = NSStringFromClass([vc class]);
+    BOOL isGroup = [className isEqualToString:@"ChatRoomInfoViewController"];
+
+    NSString *chatId = @"";
+    NSString *ivarName = isGroup ? @"m_chatRoomContact" : @"m_contact";
+    Ivar contactIvar = class_getInstanceVariable([vc class], [ivarName UTF8String]);
+    if (contactIvar) {
+        id contact = object_getIvar(vc, contactIvar);
+        if ([contact respondsToSelector:@selector(m_nsUsrName)]) {
+            chatId = [contact m_nsUsrName] ?: @"";
+        }
     }
+
+    // 动态找“查找聊天内容 / 备注”所在行，插在它下面
+    NSInteger insertRow = isGroup ? 5 : 1;
     @try {
-        [AIDiagnostics inspectViewController:viewController];
+        NSString *anchor = isGroup ? @"备注" : @"查找聊天内容";
+        NSInteger rows = [tableView numberOfRowsInSection:1];
+        for (NSInteger row = 0; row < rows; row++) {
+            UITableViewCell *cell = [tableView.dataSource tableView:tableView
+                                               cellForRowAtIndexPath:[NSIndexPath indexPathForRow:row inSection:1]];
+            if ([[cell textLabel].text containsString:anchor]) {
+                insertRow = row + 1;
+                break;
+            }
+        }
     } @catch (NSException *exception) {
-        NSLog(kAITweakLogPrefix "界面诊断异常: %@", exception);
+        NSLog(kAITweakLogPrefix "定位插入行失败，用默认位置: %@", exception);
+    }
+
+    return @{@"vc": vc, @"group": @(isGroup), @"row": @(insertRow), @"chat": chatId};
+}
+
+static NSDictionary *aiConfigForTable(UITableView *tableView) {
+    return objc_getAssociatedObject(tableView, &kAIConfigKey);
+}
+
+static void (*orig_reloadTableData_addContact)(id, SEL);
+static void (*orig_reloadTableData_chatRoom)(id, SEL);
+
+static void swz_reloadTableData(id self, SEL _cmd) {
+    NSString *className = NSStringFromClass([self class]);
+    if ([className isEqualToString:@"AddContactToChatRoomViewController"]) {
+        if (orig_reloadTableData_addContact) orig_reloadTableData_addContact(self, _cmd);
+    } else if ([className isEqualToString:@"ChatRoomInfoViewController"]) {
+        if (orig_reloadTableData_chatRoom) orig_reloadTableData_chatRoom(self, _cmd);
+    }
+
+    @try {
+        if (![self isKindOfClass:[UIViewController class]]) return;
+        UIViewController *vc = (UIViewController *)self;
+        UITableView *tableView = nil;
+        Ivar tableIvar = class_getInstanceVariable([vc class], "m_tableView");
+        if (tableIvar) tableView = object_getIvar(vc, tableIvar);
+        if (!tableView) tableView = [AIDiagnostics findTableViewInView:vc.view];
+        if (tableView) {
+            objc_setAssociatedObject(tableView, &kAIConfigKey,
+                                     aiBuildConfigForVC(vc, tableView),
+                                     OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        }
+    } @catch (NSException *exception) {
+        NSLog(kAITweakLogPrefix "关联聊天信息页表格失败: %@", exception);
     }
 }
 
-static void swz_presentViewController(id self, SEL _cmd, UIViewController *viewController, BOOL animated, void (^completion)(void)) {
-    if (orig_presentViewController) {
-        orig_presentViewController(self, _cmd, viewController, animated, completion);
+// ---- MMTableViewInfo 数据源方法（含父类实现，靠关联判断只影响这两个页面）----
+
+static NSInteger (*orig_mm_numberOfRows)(id, SEL, UITableView *, NSInteger);
+static NSInteger swz_mm_numberOfRows(id self, SEL _cmd, UITableView *tableView, NSInteger section) {
+    NSInteger orig = orig_mm_numberOfRows ? orig_mm_numberOfRows(self, _cmd, tableView, section) : 0;
+    NSDictionary *config = aiConfigForTable(tableView);
+    if (config && section == 1) return orig + 1;
+    return orig;
+}
+
+static UITableViewCell *(*orig_mm_cellForRow)(id, SEL, UITableView *, NSIndexPath *);
+static UITableViewCell *swz_mm_cellForRow(id self, SEL _cmd, UITableView *tableView, NSIndexPath *indexPath) {
+    NSDictionary *config = aiConfigForTable(tableView);
+    if (config && indexPath.section == 1) {
+        NSInteger insertRow = [config[@"row"] integerValue];
+        if (indexPath.row == insertRow) {
+            UITableViewCell *cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault
+                                                           reuseIdentifier:@"WeChatAICell"];
+            cell.textLabel.text = @"AI 助手";
+            cell.textLabel.font = [UIFont systemFontOfSize:16];
+            UISwitch *switchView = [[UISwitch alloc] initWithFrame:CGRectZero];
+            switchView.on = [AISettings chatEnabled:config[@"chat"]
+                                    defaultEnabled:![config[@"group"] boolValue]];
+            objc_setAssociatedObject(switchView, &kAISwitchChatKey, config[@"chat"],
+                                     OBJC_ASSOCIATION_COPY_NONATOMIC);
+            [switchView addTarget:[WeChatAIHandler class]
+                           action:@selector(aiSwitchChanged:)
+                 forControlEvents:UIControlEventValueChanged];
+            cell.accessoryView = switchView;
+            return cell;
+        }
+        if (indexPath.row > insertRow) {
+            NSIndexPath *shifted = [NSIndexPath indexPathForRow:indexPath.row - 1 inSection:indexPath.section];
+            return orig_mm_cellForRow ? orig_mm_cellForRow(self, _cmd, tableView, shifted) : nil;
+        }
     }
-    @try {
-        [AIDiagnostics inspectViewController:viewController];
-    } @catch (NSException *exception) {
-        NSLog(kAITweakLogPrefix "界面诊断异常: %@", exception);
+    return orig_mm_cellForRow ? orig_mm_cellForRow(self, _cmd, tableView, indexPath) : nil;
+}
+
+static void (*orig_mm_didSelect)(id, SEL, UITableView *, NSIndexPath *);
+static void swz_mm_didSelect(id self, SEL _cmd, UITableView *tableView, NSIndexPath *indexPath) {
+    NSDictionary *config = aiConfigForTable(tableView);
+    if (config && indexPath.section == 1) {
+        NSInteger insertRow = [config[@"row"] integerValue];
+        if (indexPath.row == insertRow) {
+            NSString *chatId = config[@"chat"];
+            BOOL isGroup = [config[@"group"] boolValue];
+            BOOL nowOn = [AISettings chatEnabled:chatId defaultEnabled:!isGroup];
+            [AISettings setChatEnabled:!nowOn chatId:chatId];
+            [tableView reloadData];
+            [tableView deselectRowAtIndexPath:indexPath animated:YES];
+            return;
+        }
+        if (indexPath.row > insertRow) {
+            NSIndexPath *shifted = [NSIndexPath indexPathForRow:indexPath.row - 1 inSection:indexPath.section];
+            if (orig_mm_didSelect) orig_mm_didSelect(self, _cmd, tableView, shifted);
+            return;
+        }
     }
+    if (orig_mm_didSelect) orig_mm_didSelect(self, _cmd, tableView, indexPath);
+}
+
+static CGFloat (*orig_mm_heightForRow)(id, SEL, UITableView *, NSIndexPath *);
+static CGFloat swz_mm_heightForRow(id self, SEL _cmd, UITableView *tableView, NSIndexPath *indexPath) {
+    NSDictionary *config = aiConfigForTable(tableView);
+    if (config && indexPath.section == 1) {
+        NSInteger insertRow = [config[@"row"] integerValue];
+        if (indexPath.row == insertRow) return 44;
+        if (indexPath.row > insertRow) {
+            NSIndexPath *shifted = [NSIndexPath indexPathForRow:indexPath.row - 1 inSection:indexPath.section];
+            return orig_mm_heightForRow ? orig_mm_heightForRow(self, _cmd, tableView, shifted) : 44;
+        }
+    }
+    return orig_mm_heightForRow ? orig_mm_heightForRow(self, _cmd, tableView, indexPath) : 44;
+}
+
+static void installChatInfoRowHooks(void) {
+    Class addContactCls = NSClassFromString(@"AddContactToChatRoomViewController");
+    Class chatRoomCls = NSClassFromString(@"ChatRoomInfoViewController");
+    Class infoCls = NSClassFromString(@"MMTableViewInfo");
+    if (!infoCls) return;
+
+    Method method;
+    if (addContactCls) {
+        method = class_getInstanceMethod(addContactCls, @selector(reloadTableData));
+        if (method) {
+            orig_reloadTableData_addContact = (void *)method_getImplementation(method);
+            method_setImplementation(method, (IMP)swz_reloadTableData);
+        }
+    }
+    if (chatRoomCls) {
+        method = class_getInstanceMethod(chatRoomCls, @selector(reloadTableData));
+        if (method) {
+            orig_reloadTableData_chatRoom = (void *)method_getImplementation(method);
+            method_setImplementation(method, (IMP)swz_reloadTableData);
+        }
+    }
+
+    method = class_getInstanceMethod(infoCls, @selector(tableView:numberOfRowsInSection:));
+    if (method) {
+        orig_mm_numberOfRows = (void *)method_getImplementation(method);
+        method_setImplementation(method, (IMP)swz_mm_numberOfRows);
+    }
+    method = class_getInstanceMethod(infoCls, @selector(tableView:cellForRowAtIndexPath:));
+    if (method) {
+        orig_mm_cellForRow = (void *)method_getImplementation(method);
+        method_setImplementation(method, (IMP)swz_mm_cellForRow);
+    }
+    method = class_getInstanceMethod(infoCls, @selector(tableView:didSelectRowAtIndexPath:));
+    if (method) {
+        orig_mm_didSelect = (void *)method_getImplementation(method);
+        method_setImplementation(method, (IMP)swz_mm_didSelect);
+    }
+    method = class_getInstanceMethod(infoCls, @selector(tableView:heightForRowAtIndexPath:));
+    if (method) {
+        orig_mm_heightForRow = (void *)method_getImplementation(method);
+        method_setImplementation(method, (IMP)swz_mm_heightForRow);
+    }
+
+    NSLog(kAITweakLogPrefix "聊天信息页 AI 开关行 hook 安装完成");
 }
 
 static BOOL g_hooksInstalled = NO;
@@ -746,23 +927,8 @@ static int installHooks(void) {
         NSLog(kAITweakLogPrefix "没有找到 SendTextMessage:toUsrName:，本机发送记录将不可用");
     }
 
-    // 界面诊断：监听导航 push，识别聊天信息页类名
-    Method pushMethod = class_getInstanceMethod([UINavigationController class],
-                                                @selector(pushViewController:animated:));
-    if (pushMethod) {
-        orig_pushViewController = (void *)method_getImplementation(pushMethod);
-        method_setImplementation(pushMethod, (IMP)swz_pushViewController);
-        NSLog(kAITweakLogPrefix "hook 安装成功: UINavigationController pushViewController:animated:");
-    }
-
-    // 兜底：有些页面可能是 present 出来的
-    Method presentMethod = class_getInstanceMethod([UIViewController class],
-                                                   @selector(presentViewController:animated:completion:));
-    if (presentMethod) {
-        orig_presentViewController = (void *)method_getImplementation(presentMethod);
-        method_setImplementation(presentMethod, (IMP)swz_presentViewController);
-        NSLog(kAITweakLogPrefix "hook 安装成功: UIViewController presentViewController");
-    }
+    // 聊天信息页插入“AI 助手”开关行
+    installChatInfoRowHooks();
     return 1;
 }
 
