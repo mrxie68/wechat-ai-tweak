@@ -150,7 +150,7 @@ static NSString * const kAISettingsGroupChatKey = @"WeChatAIGroupChatEnabled";
 
 + (BOOL)singleChatEnabled {
     NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
-    if ([defaults objectForKey:kAISettingsSingleChatKey] == nil) return YES; // 默认开
+    if ([defaults objectForKey:kAISettingsSingleChatKey] == nil) return NO; // 默认关（和群聊一致，防误回复）
     return [defaults boolForKey:kAISettingsSingleChatKey];
 }
 

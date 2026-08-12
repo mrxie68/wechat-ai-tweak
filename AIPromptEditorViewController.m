@@ -538,7 +538,7 @@ static UITextField *makeRowField(NSString *placeholder) {
 
 - (void)resetTapped {
     self.enabledSwitch.on = YES;
-    self.singleChatSwitch.on = YES;
+    self.singleChatSwitch.on = NO;
     self.groupChatSwitch.on = NO;
     self.apiKeyReal = kAIAPIKey;
     self.apiKeyField.text = [self maskedKey:kAIAPIKey];
