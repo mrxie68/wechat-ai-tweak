@@ -42,14 +42,17 @@
 @property (nonatomic, strong) UILabel *promptLabel;
 @property (nonatomic, strong) UITextView *textView;
 @property (nonatomic, strong) UILabel *promptHint;
+@property (nonatomic, strong) UIButton *promptResetButton;
 @property (nonatomic, strong) UIView *styleCard;
 @property (nonatomic, strong) UILabel *styleLabel;
 @property (nonatomic, strong) UITextView *styleView;
 @property (nonatomic, strong) UILabel *styleHint;
+@property (nonatomic, strong) UIButton *styleResetButton;
 @property (nonatomic, strong) UIView *profileCard;
 @property (nonatomic, strong) UILabel *profileLabel;
 @property (nonatomic, strong) UITextView *profileView;
 @property (nonatomic, strong) UILabel *profileHint;
+@property (nonatomic, strong) UIButton *profileResetButton;
 @property (nonatomic, strong) UIView *memoryCard;
 @property (nonatomic, strong) UILabel *memoryLabel;
 @property (nonatomic, strong) UILabel *memoryValueLabel;
@@ -242,6 +245,12 @@ static UITextField *makeRowField(NSString *placeholder) {
     self.promptHint.font = [UIFont systemFontOfSize:12];
     self.promptHint.textColor = [UIColor secondaryLabelColor];
     [self.promptCard addSubview:self.promptHint];
+    self.promptResetButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    [self.promptResetButton setTitle:@"恢复默认" forState:UIControlStateNormal];
+    self.promptResetButton.titleLabel.font = [UIFont systemFontOfSize:13];
+    [self.promptResetButton addTarget:self action:@selector(resetPromptTapped)
+                     forControlEvents:UIControlEventTouchUpInside];
+    [self.promptCard addSubview:self.promptResetButton];
 
     // 聊天风格样本
     self.styleCard = makeCard();
@@ -260,6 +269,12 @@ static UITextField *makeRowField(NSString *placeholder) {
     self.styleHint.font = [UIFont systemFontOfSize:12];
     self.styleHint.textColor = [UIColor secondaryLabelColor];
     [self.styleCard addSubview:self.styleHint];
+    self.styleResetButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    [self.styleResetButton setTitle:@"恢复默认" forState:UIControlStateNormal];
+    self.styleResetButton.titleLabel.font = [UIFont systemFontOfSize:13];
+    [self.styleResetButton addTarget:self action:@selector(resetStyleTapped)
+                    forControlEvents:UIControlEventTouchUpInside];
+    [self.styleCard addSubview:self.styleResetButton];
 
     // 基础信息（AI 聊天时以此为准，没写的绝不编造）
     self.profileCard = makeCard();
@@ -278,6 +293,12 @@ static UITextField *makeRowField(NSString *placeholder) {
     self.profileHint.font = [UIFont systemFontOfSize:12];
     self.profileHint.textColor = [UIColor secondaryLabelColor];
     [self.profileCard addSubview:self.profileHint];
+    self.profileResetButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    [self.profileResetButton setTitle:@"恢复默认" forState:UIControlStateNormal];
+    self.profileResetButton.titleLabel.font = [UIFont systemFontOfSize:13];
+    [self.profileResetButton addTarget:self action:@selector(resetProfileTapped)
+                      forControlEvents:UIControlEventTouchUpInside];
+    [self.profileCard addSubview:self.profileResetButton];
 
     // 清空记忆（总开关：清掉所有会话的上下文）
     self.memoryCard = makeCard();
@@ -384,17 +405,20 @@ static UITextField *makeRowField(NSString *placeholder) {
     self.typingLabel.frame = CGRectMake(16, rowHeight * 3, 140, rowHeight);
     self.typingSwitch.frame = CGRectMake(cardWidth - 60 - 14, rowHeight * 3 + 9, 60, 30);
 
-    self.promptLabel.frame = CGRectMake(16, 12, cardWidth - 32, 20);
+    self.promptLabel.frame = CGRectMake(16, 12, cardWidth - 110, 20);
     self.textView.frame = CGRectMake(12, 38, cardWidth - 24, textCardHeight - 38 - 26);
     self.promptHint.frame = CGRectMake(16, textCardHeight - 22, cardWidth - 32, 16);
+    self.promptResetButton.frame = CGRectMake(cardWidth - 92, 6, 76, 26);
 
-    self.styleLabel.frame = CGRectMake(16, 12, cardWidth - 32, 20);
+    self.styleLabel.frame = CGRectMake(16, 12, cardWidth - 110, 20);
     self.styleView.frame = CGRectMake(12, 38, cardWidth - 24, textCardHeight - 38 - 26);
     self.styleHint.frame = CGRectMake(16, textCardHeight - 22, cardWidth - 32, 16);
+    self.styleResetButton.frame = CGRectMake(cardWidth - 92, 6, 76, 26);
 
-    self.profileLabel.frame = CGRectMake(16, 12, cardWidth - 32, 20);
+    self.profileLabel.frame = CGRectMake(16, 12, cardWidth - 110, 20);
     self.profileView.frame = CGRectMake(12, 38, cardWidth - 24, textCardHeight - 38 - 26);
     self.profileHint.frame = CGRectMake(16, textCardHeight - 22, cardWidth - 32, 16);
+    self.profileResetButton.frame = CGRectMake(cardWidth - 92, 6, 76, 26);
 
     self.memoryLabel.frame = CGRectMake(16, 0, 200, rowHeight);
     self.memoryValueLabel.frame = CGRectMake(cardWidth - 50, 0, 30, rowHeight);
@@ -610,6 +634,18 @@ static UITextField *makeRowField(NSString *placeholder) {
     self.typingSwitch.on = YES;
     self.textView.text = kAIAutoSystemPrompt;
     self.styleView.text = kAIStyleSamplesDefault;
+    self.profileView.text = kAIUserProfile;
+}
+
+- (void)resetPromptTapped {
+    self.textView.text = kAIAutoSystemPrompt;
+}
+
+- (void)resetStyleTapped {
+    self.styleView.text = kAIStyleSamplesDefault;
+}
+
+- (void)resetProfileTapped {
     self.profileView.text = kAIUserProfile;
 }
 
