@@ -869,6 +869,63 @@ static UITableViewCell *aiMakeMemoryCell(void) {
 
 static void (*orig_reloadTableData_addContact)(id, SEL);
 static void (*orig_reloadTableData_chatRoom)(id, SEL);
+static void (*orig_viewDidLoad_addContact)(id, SEL);
+static void (*orig_viewDidLoad_chatRoom)(id, SEL);
+static void (*orig_viewDidAppear_addContact)(id, SEL, BOOL);
+static void (*orig_viewDidAppear_chatRoom)(id, SEL, BOOL);
+
+// 直接从页面 VC 的 m_tableView 取表格并挂配置（不依赖响应链，老日志确认这条 ivar 路径可用）
+static void attachChatInfoConfigForVC(UIViewController *vc, NSString *className) {
+    @try {
+        UITableView *tableView = nil;
+        Ivar tableIvar = class_getInstanceVariable([vc class], "m_tableView");
+        if (tableIvar) tableView = object_getIvar(vc, tableIvar);
+        if (!tableView) tableView = [AIDiagnostics findTableViewInView:vc.view];
+        if (!tableView) return;
+        objc_setAssociatedObject(tableView, &kAIConfigKey,
+                                 aiBuildConfigForVC(vc, tableView),
+                                 OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        g_chatTableVC = className;
+        g_chatTableDiag = [NSString stringWithFormat:@"页面=%@ 表=%@ 数据源=%@ 配置=已挂",
+                           className,
+                           NSStringFromClass([tableView class]),
+                           NSStringFromClass(object_getClass(tableView.dataSource))];
+        // 重新加载让 AI 助手/清空记忆立即出现
+        if ([NSThread isMainThread]) {
+            [tableView reloadData];
+        } else {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [tableView reloadData];
+            });
+        }
+    } @catch (NSException *exception) {
+        NSLog(kAITweakLogPrefix "挂聊天信息页配置失败: %@", exception);
+    }
+}
+
+static void swz_viewDidLoad(id self, SEL _cmd) {
+    NSString *className = NSStringFromClass([self class]);
+    if ([className isEqualToString:@"AddContactToChatRoomViewController"]) {
+        if (orig_viewDidLoad_addContact) orig_viewDidLoad_addContact(self, _cmd);
+    } else if ([className isEqualToString:@"ChatRoomInfoViewController"]) {
+        if (orig_viewDidLoad_chatRoom) orig_viewDidLoad_chatRoom(self, _cmd);
+    }
+    if ([self isKindOfClass:[UIViewController class]]) {
+        attachChatInfoConfigForVC((UIViewController *)self, className);
+    }
+}
+
+static void swz_viewDidAppear(id self, SEL _cmd, BOOL animated) {
+    NSString *className = NSStringFromClass([self class]);
+    if ([className isEqualToString:@"AddContactToChatRoomViewController"]) {
+        if (orig_viewDidAppear_addContact) orig_viewDidAppear_addContact(self, _cmd, animated);
+    } else if ([className isEqualToString:@"ChatRoomInfoViewController"]) {
+        if (orig_viewDidAppear_chatRoom) orig_viewDidAppear_chatRoom(self, _cmd, animated);
+    }
+    if ([self isKindOfClass:[UIViewController class]]) {
+        attachChatInfoConfigForVC((UIViewController *)self, className);
+    }
+}
 
 static void swz_reloadTableData(id self, SEL _cmd) {
     NSString *className = NSStringFromClass([self class]);
@@ -1029,11 +1086,37 @@ static void installChatInfoRowHooks(void) {
     if (!infoCls) return;
 
     Method method;
+    // 只 hook“类自己实现”的方法，避免误改父类实现影响微信其他页面
+    BOOL (^classDefines)(Class, SEL) = ^BOOL(Class cls, SEL sel) {
+        if (!cls || !sel) return NO;
+        unsigned int count = 0;
+        Method *methods = class_copyMethodList(cls, &count);
+        BOOL found = NO;
+        for (unsigned int i = 0; i < count; i++) {
+            if (method_getName(methods[i]) == sel) {
+                found = YES;
+                break;
+            }
+        }
+        free(methods);
+        return found;
+    };
+
     if (addContactCls) {
         method = class_getInstanceMethod(addContactCls, @selector(reloadTableData));
         if (method) {
             orig_reloadTableData_addContact = (void *)method_getImplementation(method);
             method_setImplementation(method, (IMP)swz_reloadTableData);
+        }
+        if (classDefines(addContactCls, @selector(viewDidLoad))) {
+            method = class_getInstanceMethod(addContactCls, @selector(viewDidLoad));
+            orig_viewDidLoad_addContact = (void *)method_getImplementation(method);
+            method_setImplementation(method, (IMP)swz_viewDidLoad);
+        }
+        if (classDefines(addContactCls, @selector(viewDidAppear:))) {
+            method = class_getInstanceMethod(addContactCls, @selector(viewDidAppear:));
+            orig_viewDidAppear_addContact = (void *)method_getImplementation(method);
+            method_setImplementation(method, (IMP)swz_viewDidAppear);
         }
     }
     if (chatRoomCls) {
@@ -1041,6 +1124,16 @@ static void installChatInfoRowHooks(void) {
         if (method) {
             orig_reloadTableData_chatRoom = (void *)method_getImplementation(method);
             method_setImplementation(method, (IMP)swz_reloadTableData);
+        }
+        if (classDefines(chatRoomCls, @selector(viewDidLoad))) {
+            method = class_getInstanceMethod(chatRoomCls, @selector(viewDidLoad));
+            orig_viewDidLoad_chatRoom = (void *)method_getImplementation(method);
+            method_setImplementation(method, (IMP)swz_viewDidLoad);
+        }
+        if (classDefines(chatRoomCls, @selector(viewDidAppear:))) {
+            method = class_getInstanceMethod(chatRoomCls, @selector(viewDidAppear:));
+            orig_viewDidAppear_chatRoom = (void *)method_getImplementation(method);
+            method_setImplementation(method, (IMP)swz_viewDidAppear);
         }
     }
 
