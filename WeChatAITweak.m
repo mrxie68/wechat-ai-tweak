@@ -137,6 +137,11 @@ static UIViewController *tweakTopViewController(void) {
     return top;
 }
 
+// hook 安装状态（供 @AI 状态 命令显示）
+static BOOL g_hookAsync = NO;
+static BOOL g_hookExt = NO;
+static BOOL g_hookSend = NO;
+
 #pragma mark - 核心逻辑
 
 @interface WeChatAIHandler : NSObject
@@ -413,9 +418,6 @@ static BOOL g_sendingReply = NO;
 static void (*orig_AsyncOnAddMsg)(id, SEL, id, CMessageWrap *);
 static void (*orig_MainThreadNotifyToExt)(id, SEL, NSDictionary *);
 static void (*orig_SendTextMessage)(id, SEL, NSString *, NSString *);
-static BOOL g_hookAsync = NO;
-static BOOL g_hookExt = NO;
-static BOOL g_hookSend = NO;
 
 static void swz_AsyncOnAddMsg(id self, SEL _cmd, id arg1, CMessageWrap *wrap) {
     if (orig_AsyncOnAddMsg) {
