@@ -722,7 +722,7 @@ static void swz_SendTextMessage(id self, SEL _cmd, NSString *content, NSString *
 // 读取该页面的配置：VC、是否群聊、chatId、插入位置
 static NSDictionary *aiBuildConfigForVC(UIViewController *vc, UITableView *tableView) {
     NSString *className = NSStringFromClass([vc class]);
-    BOOL isGroup = [className isEqualToString:@"ChatRoomInfoViewController"];
+    BOOL isGroup = [className containsString:@"ChatRoomInfo"];
 
     NSString *chatId = @"";
     NSString *ivarName = isGroup ? @"m_chatRoomContact" : @"m_contact";
@@ -767,14 +767,32 @@ static NSDictionary *aiConfigForTable(UITableView *tableView) {
         UIResponder *responder = tableView;
         while ((responder = [responder nextResponder])) {
             if ([responder isKindOfClass:[UIViewController class]]) {
-                NSString *className = NSStringFromClass([responder class]);
-                if ([className isEqualToString:@"AddContactToChatRoomViewController"] ||
-                    [className isEqualToString:@"ChatRoomInfoViewController"]) {
+                UIViewController *vc = (UIViewController *)responder;
+                NSString *className = NSStringFromClass([vc class]);
+                BOOL isKnownClass = [className isEqualToString:@"AddContactToChatRoomViewController"] ||
+                                    [className isEqualToString:@"ChatRoomInfoViewController"];
+                BOOL looksLike = isKnownClass ||
+                                 [className containsString:@"ChatInfo"] ||
+                                 [className containsString:@"ChatDetail"] ||
+                                 [className containsString:@"ChatSetting"] ||
+                                 [className containsString:@"SessionDetail"];
+                if (!looksLike) {
+                    NSString *title = vc.navigationItem.title ?: vc.title ?: @"";
+                    looksLike = [title containsString:@"聊天信息"] ||
+                                [title containsString:@"聊天详情"] ||
+                                [title containsString:@"群聊信息"];
+                }
+                if (looksLike) {
+                    // 疑似聊天信息页：记录类名（未适配的类先只记录不插行，等确认后加入适配）
                     g_chatTableVC = className;
-                    config = aiBuildConfigForVC((UIViewController *)responder, tableView);
-                    if (config) {
-                        objc_setAssociatedObject(tableView, &kAIConfigKey, config,
-                                                 OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+                    g_chatTableDiag = [NSString stringWithFormat:@"页面=%@%@",
+                                       className, isKnownClass ? @"" : @"（疑似聊天信息页，未适配）"];
+                    if (isKnownClass) {
+                        config = aiBuildConfigForVC(vc, tableView);
+                        if (config) {
+                            objc_setAssociatedObject(tableView, &kAIConfigKey, config,
+                                                     OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+                        }
                     }
                 }
                 break;
@@ -854,6 +872,12 @@ static void swz_reloadTableData(id self, SEL _cmd) {
         if (tableIvar) tableView = object_getIvar(vc, tableIvar);
         if (!tableView) tableView = [AIDiagnostics findTableViewInView:vc.view];
         if (tableView) {
+            g_chatTableVC = className;
+            g_chatTableDiag = [NSString stringWithFormat:@"页面=%@ 表=%@ 数据源=%@ 配置=%@",
+                               className,
+                               NSStringFromClass([tableView class]),
+                               NSStringFromClass(object_getClass(tableView.dataSource)),
+                               objc_getAssociatedObject(tableView, &kAIConfigKey) ? @"已挂" : @"未挂"];
             objc_setAssociatedObject(tableView, &kAIConfigKey,
                                      aiBuildConfigForVC(vc, tableView),
                                      OBJC_ASSOCIATION_RETAIN_NONATOMIC);
