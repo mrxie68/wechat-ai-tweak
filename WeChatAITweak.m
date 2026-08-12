@@ -215,8 +215,6 @@ static NSMutableSet *g_pendingChats = nil;
 static NSString *g_contextAccount = nil;
 static void *kAIConfigKey = &kAIConfigKey;          // tableView -> 页面配置
 static void *kAISwitchChatKey = &kAISwitchChatKey;  // 开关 -> chatId
-static NSString *g_chatTableDiag = nil;              // 最近一次聊天信息页表格的真实结构（AI 状态里可看）
-static NSString *g_chatTableVC = nil;                // 最近一次识别到的聊天信息页控制器（单聊/群聊）
 
 // 最近发出的 AI 回复（用于回显去重：发出时已记过上下文，回显不再记第二遍）
 static NSObject *g_replyLock = nil;
@@ -543,10 +541,9 @@ static NSMutableArray *g_recentReplyOrder = nil;
     NSString *whiteRaw = [kAIAllowedChats stringByTrimmingCharactersInSet:
                           [NSCharacterSet whitespaceAndNewlineCharacterSet]];
     NSString *whiteDesc = whiteRaw.length == 0 ? @"全部会话" : whiteRaw;
-    NSString *tableDiag = g_chatTableDiag.length ? g_chatTableDiag : @"（还没打开过聊天信息页）";
 
     return [NSString stringWithFormat:
-        @"🤖 微信 AI v%@\n总开关：%@\n模式：%@\n模型：%@\n延迟：%.1f秒\nhook：收消息Async %@ / 收消息Ext %@ / 发送 %@\nwcplugins：%@\nAPI Key：%@\n白名单：%@\n表格诊断：%@",
+        @"🤖 微信 AI v%@\n总开关：%@\n模式：%@\n模型：%@\n延迟：%.1f秒\nhook：收消息Async %@ / 收消息Ext %@ / 发送 %@\nwcplugins：%@\nAPI Key：%@\n白名单：%@",
         kAITweakVersion, [AISettings enabled] ? @"开" : @"关",
         mode, [AISettings model],
         [AISettings replyDelay],
@@ -554,7 +551,7 @@ static NSMutableArray *g_recentReplyOrder = nil;
         g_hookExt ? @"✓" : @"✗",
         g_hookSend ? @"✓" : @"✗",
         g_wcpluginsClassFound ? (g_wcpluginsRegistered ? (g_wcpluginsControllerRegistered ? @"wcplugins ✓ 设置页已注册" : @"wcplugins ✓ 开关已注册") : @"wcplugins ✗ 未注册成功") : @"未装 wcplugins",
-        keyMasked, whiteDesc, tableDiag];
+        keyMasked, whiteDesc];
 }
 
 + (void)presentAlertWithTitle:(NSString *)title message:(NSString *)message {
@@ -769,44 +766,12 @@ static NSDictionary *aiConfigForTable(UITableView *tableView) {
             if ([responder isKindOfClass:[UIViewController class]]) {
                 UIViewController *vc = (UIViewController *)responder;
                 NSString *className = NSStringFromClass([vc class]);
-                BOOL isKnownClass = [className isEqualToString:@"AddContactToChatRoomViewController"] ||
-                                    [className isEqualToString:@"ChatRoomInfoViewController"];
-                BOOL looksLike = isKnownClass ||
-                                 [className containsString:@"ChatInfo"] ||
-                                 [className containsString:@"ChatDetail"] ||
-                                 [className containsString:@"ChatSetting"] ||
-                                 [className containsString:@"SessionDetail"];
-                if (!looksLike) {
-                    NSString *title = vc.navigationItem.title ?: vc.title ?: @"";
-                    looksLike = [title containsString:@"聊天信息"] ||
-                                [title containsString:@"聊天详情"] ||
-                                [title containsString:@"群聊信息"];
-                }
-                if (looksLike) {
-                    // 疑似聊天信息页：记录类名和表格结构（未适配的类先只记录不插行）
-                    g_chatTableVC = className;
-                    @try {
-                        NSInteger sections = [tableView numberOfSections];
-                        NSInteger s1Rows = sections > 1 ? [tableView numberOfRowsInSection:1] : -1;
-                        g_chatTableDiag = [NSString stringWithFormat:@"页面=%@%@ 表=%@ 数据源=%@ sections=%ld S1=%ld",
-                                           className,
-                                           isKnownClass ? @"" : @"（疑似聊天信息页，未适配）",
-                                           NSStringFromClass([tableView class]),
-                                           NSStringFromClass(object_getClass(tableView.dataSource)),
-                                           (long)sections, (long)s1Rows];
-                    } @catch (NSException *exception) {
-                        g_chatTableDiag = [NSString stringWithFormat:@"页面=%@%@ 表=%@ 数据源=%@",
-                                           className,
-                                           isKnownClass ? @"" : @"（疑似聊天信息页，未适配）",
-                                           NSStringFromClass([tableView class]),
-                                           NSStringFromClass(object_getClass(tableView.dataSource))];
-                    }
-                    if (isKnownClass) {
-                        config = aiBuildConfigForVC(vc, tableView);
-                        if (config) {
-                            objc_setAssociatedObject(tableView, &kAIConfigKey, config,
-                                                     OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-                        }
+                if ([className isEqualToString:@"AddContactToChatRoomViewController"] ||
+                    [className isEqualToString:@"ChatRoomInfoViewController"]) {
+                    config = aiBuildConfigForVC(vc, tableView);
+                    if (config) {
+                        objc_setAssociatedObject(tableView, &kAIConfigKey, config,
+                                                 OBJC_ASSOCIATION_RETAIN_NONATOMIC);
                     }
                 }
                 break;
@@ -885,11 +850,6 @@ static void attachChatInfoConfigForVC(UIViewController *vc, NSString *className)
         objc_setAssociatedObject(tableView, &kAIConfigKey,
                                  aiBuildConfigForVC(vc, tableView),
                                  OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-        g_chatTableVC = className;
-        g_chatTableDiag = [NSString stringWithFormat:@"页面=%@ 表=%@ 数据源=%@ 配置=已挂",
-                           className,
-                           NSStringFromClass([tableView class]),
-                           NSStringFromClass(object_getClass(tableView.dataSource))];
         // 重新加载让 AI 助手/清空记忆立即出现
         if ([NSThread isMainThread]) {
             [tableView reloadData];
@@ -943,12 +903,6 @@ static void swz_reloadTableData(id self, SEL _cmd) {
         if (tableIvar) tableView = object_getIvar(vc, tableIvar);
         if (!tableView) tableView = [AIDiagnostics findTableViewInView:vc.view];
         if (tableView) {
-            g_chatTableVC = className;
-            g_chatTableDiag = [NSString stringWithFormat:@"页面=%@ 表=%@ 数据源=%@ 配置=%@",
-                               className,
-                               NSStringFromClass([tableView class]),
-                               NSStringFromClass(object_getClass(tableView.dataSource)),
-                               objc_getAssociatedObject(tableView, &kAIConfigKey) ? @"已挂" : @"未挂"];
             objc_setAssociatedObject(tableView, &kAIConfigKey,
                                      aiBuildConfigForVC(vc, tableView),
                                      OBJC_ASSOCIATION_RETAIN_NONATOMIC);
@@ -971,15 +925,6 @@ static NSInteger swz_mm_numberOfRows(id self, SEL _cmd, UITableView *tableView, 
     NSInteger orig = origFn ? origFn(self, _cmd, tableView, section) : 0;
     NSDictionary *config = aiConfigForTable(tableView);
     if (config && section == 1) {
-        @try {
-            g_chatTableDiag = [NSString stringWithFormat:@"页面=%@ 表=%@ 数据源=%@ 原行数=%ld 插行=%ld",
-                               g_chatTableVC ?: @"未知",
-                               NSStringFromClass([tableView class]),
-                               NSStringFromClass(object_getClass(self)),
-                               (long)orig, (long)[config[@"row"] integerValue]];
-        } @catch (NSException *exception) {
-            // 诊断信息失败不影响功能
-        }
         return orig + 2; // AI 助手开关 + 清空记忆
     }
     return orig;
@@ -1024,7 +969,6 @@ static UITableViewCell *swz_mm_cellForRow(id self, SEL _cmd, UITableView *tableV
             return aiMakeSwitchCell(on, config[@"chat"]);
         }
         if (indexPath.row == insertRow + 1) {
-            g_chatTableDiag = [g_chatTableDiag stringByAppendingString:@" 清空记忆✓"];
             return aiMakeMemoryCell();
         }
         if (indexPath.row > insertRow + 1) {
