@@ -112,6 +112,7 @@ static UIViewController *tweakTopViewController(void) {
 @implementation WeChatAIHandler
 
 static NSMutableSet *g_inFlightChats = nil;
+static BOOL g_sendingReply = NO;
 
 + (void)handleIncomingMessage:(CMessageWrap *)wrap {
     @try {
@@ -175,21 +176,6 @@ static NSMutableSet *g_inFlightChats = nil;
         if ([question isEqualToString:@"清空"] || [question isEqualToString:@"reset"]) {
             [[AIContext shared] clearChat:chatId];
             [self sendReply:@"✅ 上下文已清空" chatId:chatId];
-            return;
-        }
-
-        // 命令：打开微信内设置页
-        if ([question isEqualToString:@"设置"] || [question isEqualToString:@"settings"]) {
-            dispatch_async(dispatch_get_main_queue(), ^{
-                UIViewController *top = tweakTopViewController();
-                if (!top) {
-                    NSLog(kAITweakLogPrefix "找不到窗口，无法弹出设置页");
-                    return;
-                }
-                UINavigationController *nav = [[UINavigationController alloc]
-                    initWithRootViewController:[[AIPromptEditorViewController alloc] init]];
-                [top presentViewController:nav animated:YES completion:nil];
-            });
             return;
         }
 
@@ -273,6 +259,34 @@ static NSMutableSet *g_inFlightChats = nil;
     }
 }
 
+// 自己手动发送的命令：@AI 设置 / @AI 清空
++ (NSString *)commandFromContent:(NSString *)content {
+    if (![content hasPrefix:kAITrigger]) return nil;
+    NSString *question = [content substringFromIndex:kAITrigger.length];
+    question = [question stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    if ([question isEqualToString:@"设置"] || [question isEqualToString:@"settings"]) return @"settings";
+    if ([question isEqualToString:@"清空"] || [question isEqualToString:@"reset"]) return @"clear";
+    return nil;
+}
+
++ (void)handleCommand:(NSString *)command chatId:(NSString *)chatId {
+    if ([command isEqualToString:@"settings"]) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            UIViewController *top = tweakTopViewController();
+            if (!top) {
+                NSLog(kAITweakLogPrefix "找不到窗口，无法弹出设置页");
+                return;
+            }
+            UINavigationController *nav = [[UINavigationController alloc]
+                initWithRootViewController:[[AIPromptEditorViewController alloc] init]];
+            [top presentViewController:nav animated:YES completion:nil];
+        });
+    } else if ([command isEqualToString:@"clear"]) {
+        [[AIContext shared] clearChat:chatId];
+        [self sendReply:@"✅ 上下文已清空" chatId:chatId];
+    }
+}
+
 + (void)sendReply:(NSString *)text chatId:(NSString *)chatId {
     if (text.length == 0 || chatId.length == 0) return;
 
@@ -286,7 +300,9 @@ static NSMutableSet *g_inFlightChats = nil;
             NSLog(kAITweakLogPrefix "当前微信版本没有 SendTextMessage:toUsrName:，需要更新接口");
             return;
         }
+        g_sendingReply = YES;
         [mgr SendTextMessage:text toUsrName:chatId];
+        g_sendingReply = NO;
         NSLog(kAITweakLogPrefix "已发送回复到 %@", chatId);
     };
 
@@ -312,6 +328,20 @@ static void swz_AsyncOnAddMsg(id self, SEL _cmd, id arg1, CMessageWrap *wrap) {
 }
 
 static void swz_SendTextMessage(id self, SEL _cmd, NSString *content, NSString *usrName) {
+    @try {
+        // 自己手动发的命令：拦截，不真正发送
+        if (!g_sendingReply && content.length > 0 && usrName.length > 0 && isChatAllowed(usrName)) {
+            NSString *command = [WeChatAIHandler commandFromContent:content];
+            if (command) {
+                NSLog(kAITweakLogPrefix "拦截命令 %@ (chat: %@)", command, usrName);
+                [WeChatAIHandler handleCommand:command chatId:usrName];
+                return;
+            }
+        }
+    } @catch (NSException *exception) {
+        NSLog(kAITweakLogPrefix "命令处理异常: %@", exception);
+    }
+
     if (orig_SendTextMessage) {
         orig_SendTextMessage(self, _cmd, content, usrName);
     }
@@ -334,6 +364,23 @@ static int installHooks(void) {
         orig_AsyncOnAddMsg = (void *)method_getImplementation(recvMethod);
         method_setImplementation(recvMethod, (IMP)swz_AsyncOnAddMsg);
         NSLog(kAITweakLogPrefix "hook 安装成功: AsyncOnAddMsg:MsgWrap:");
+
+        // 首次加载弹一次提示，方便确认注入是否成功
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)),
+                       dispatch_get_main_queue(), ^{
+            NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+            if ([defaults boolForKey:@"WeChatAIWelcomeShown"]) return;
+            [defaults setBool:YES forKey:@"WeChatAIWelcomeShown"];
+            [defaults synchronize];
+
+            UIViewController *top = tweakTopViewController();
+            if (!top) return;
+            UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"微信 AI 助手已加载"
+                message:@"给自己发 @AI 设置 可打开配置页；自动模式下对方发消息即可自动回复。"
+                preferredStyle:UIAlertControllerStyleAlert];
+            [alert addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
+            [top presentViewController:alert animated:YES completion:nil];
+        });
     } else {
         NSLog(kAITweakLogPrefix "没有找到 AsyncOnAddMsg:MsgWrap:，当前微信版本可能改了接口");
     }

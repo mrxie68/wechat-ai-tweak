@@ -22,7 +22,8 @@
 2. 推送到 GitHub（仓库保持公开就有免费 macOS 编译时长）。
 3. 打开仓库的 Actions 标签，等 `Build WeChat AI` 跑完，下载 `wechat-ai-dylib` 这个 artifact，里面有 `wechat-ai.dylib`。
 4. iPhone 上把 dylib 分享给 TrollFools → 选择微信 → 注入 → 重启微信。
-5. 自动模式：在白名单会话里让对方发条消息试试；触发模式：发 `@AI 你好`。
+5. 重启微信后 2 秒左右会弹一次“微信 AI 助手已加载”（仅首次），没弹说明注入没成功，检查 TrollFools → 微信 → 插件列表里有没有 `wechat-ai.dylib`。
+6. 自动模式：在白名单会话里让对方发条消息试试；触发模式：发 `@AI 你好`。
 
 越狱用户：下载 `wechat-ai-deb` 直接安装（依赖 CydiaSubstrate），或者把 dylib 手动放进 `/Library/MobileSubstrate/DynamicLibraries/` 并配好同名 plist。
 
@@ -36,9 +37,10 @@
 
 ## 在微信里设置提示词
 
-- 任意会话发 `@AI 设置`，会弹出提示词编辑页，修改“自动回复时 AI 扮演你的要求”。
+- 直接给自己发（或任意会话）`@AI 设置`，会弹出提示词编辑页，修改“自动回复时 AI 扮演你的要求”。命令会被拦截，**不会真的发出去**，所以发给文件助手也没问题。
 - 点“保存”立即生效，存在微信本地，重启不丢；点“恢复默认”回到 [AIConfig.h](AIConfig.h) 里 `kAIAutoSystemPrompt` 的值。
 - 设置页是插件自己弹出的独立页面，不 hook 微信设置列表，换微信版本一般也不会失效。
+- `@AI 清空` 同样拦截处理，不会发出去。
 
 ## 隐私与安全（默认最小读取）
 
