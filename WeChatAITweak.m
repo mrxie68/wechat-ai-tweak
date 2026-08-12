@@ -1034,10 +1034,10 @@ static void WeChatAIInit(void) {
     if (!viewController) return;
 
     // 立即查一次；标题往往是页面加载后才设置的，0.6 秒后再查一次
-    [self inspectOnce:viewController];
+    [self inspectOnce:viewController scanTable:NO];
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.6 * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{
-        [self inspectOnce:viewController];
+        [self inspectOnce:viewController scanTable:YES];
     });
 }
 
@@ -1057,11 +1057,20 @@ static void WeChatAIInit(void) {
     return NO;
 }
 
-+ (void)inspectOnce:(UIViewController *)viewController {
++ (void)inspectOnce:(UIViewController *)viewController scanTable:(BOOL)scanTable {
     NSString *className = NSStringFromClass([viewController class]);
     NSString *title = viewController.title ?: viewController.navigationItem.title ?: @"";
-    if (![self looksLikeChatInfoPage:className title:title]) return;
     if ([className isEqualToString:@"ChatRoomInfoViewController"]) return; // 群聊已生效，不再诊断
+
+    BOOL matched = [self looksLikeChatInfoPage:className title:title];
+    if (!matched && scanTable) {
+        // 不猜类名：直接扫表格里有没有“查找聊天内容/备注”
+        UITableView *scanTable = [self findTableViewForVC:viewController];
+        if (scanTable && [self tableHasChatInfoAnchor:scanTable]) {
+            matched = YES;
+        }
+    }
+    if (!matched) return;
 
     // 每个类只提示一次，避免每次打开都弹
     NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
@@ -1092,25 +1101,6 @@ static void WeChatAIInit(void) {
         detail = [detail stringByAppendingString:@"\n（未找到表格）"];
     }
 
-    // MMTableViewInfo 运行时方法（8.0.5x 的头文件不完整，方法名要看运行时）
-    Ivar infoIvar = class_getInstanceVariable([viewController class], "m_tableViewInfo");
-    if (infoIvar) {
-        id tableInfo = object_getIvar(viewController, infoIvar);
-        detail = [detail stringByAppendingFormat:@"\n\nMMTableViewInfo(%@) 方法：\n%@",
-                  NSStringFromClass([tableInfo class]),
-                  [self methodListOfClass:[tableInfo class] limit:40]];
-    }
-
-    // WCTableView 系列是否还存在、方法名是什么
-    Class sectionClass = NSClassFromString(@"WCTableViewSectionManager");
-    detail = [detail stringByAppendingFormat:@"\n\nWCTableViewSectionManager：%@\n%@",
-              sectionClass ? @"存在" : @"不存在",
-              sectionClass ? [self methodListOfClass:sectionClass limit:20] : @"-"];
-    Class cellClass = NSClassFromString(@"WCTableViewNormalCellManager");
-    detail = [detail stringByAppendingFormat:@"\n\nWCTableViewNormalCellManager：%@\n%@",
-              cellClass ? @"存在" : @"不存在",
-              cellClass ? [self methodListOfClass:cellClass limit:20] : @"-"];
-
     if (detail.length > 2400) {
         detail = [detail substringToIndex:2400];
         detail = [detail stringByAppendingString:@"\n…（过长截断）"];
@@ -1129,6 +1119,35 @@ static void WeChatAIInit(void) {
         [alert addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
         [top presentViewController:alert animated:YES completion:nil];
     });
+}
+
++ (UITableView *)findTableViewForVC:(UIViewController *)viewController {
+    UITableView *tableView = nil;
+    Ivar tableIvar = class_getInstanceVariable([viewController class], "m_tableView");
+    if (tableIvar) tableView = object_getIvar(viewController, tableIvar);
+    if (!tableView) tableView = [self findTableViewInView:viewController.view];
+    return tableView;
+}
+
+// 有界扫描：只在靠前的 section/行里找“查找聊天内容/备注”，避免大表格卡顿
++ (BOOL)tableHasChatInfoAnchor:(UITableView *)tableView {
+    @try {
+        NSInteger sections = MIN([tableView numberOfSections], 4);
+        for (NSInteger section = 0; section < sections; section++) {
+            NSInteger rows = MIN([tableView numberOfRowsInSection:section], 12);
+            for (NSInteger row = 0; row < rows; row++) {
+                UITableViewCell *cell = [tableView.dataSource tableView:tableView
+                                                   cellForRowAtIndexPath:[NSIndexPath indexPathForRow:row inSection:section]];
+                NSString *labels = [self labelTextsInView:cell];
+                if ([labels containsString:@"查找聊天内容"] || [labels containsString:@"备注"]) {
+                    return YES;
+                }
+            }
+        }
+    } @catch (NSException *exception) {
+        // 忽略，继续
+    }
+    return NO;
 }
 
 + (UITableView *)findTableViewInView:(UIView *)view {
