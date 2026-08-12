@@ -864,15 +864,50 @@ static void swz_reloadTableData(id self, SEL _cmd) {
 // ---- MMTableViewInfo 数据源方法（含父类实现，靠关联判断只影响这两个页面）----
 
 static NSInteger (*orig_mm_numberOfRows)(id, SEL, UITableView *, NSInteger);
+static void *kNumberRowsHookedKey = &kNumberRowsHookedKey;  // dataSource 类已挂钩标记
+static void *kOrigNumberRowsKey = &kOrigNumberRowsKey;      // 每个类自己的原实现
 static NSInteger swz_mm_numberOfRows(id self, SEL _cmd, UITableView *tableView, NSInteger section) {
-    NSInteger orig = orig_mm_numberOfRows ? orig_mm_numberOfRows(self, _cmd, tableView, section) : 0;
+    // 优先用“当前 dataSource 类”自己的原实现（子类可能覆写了行数方法）
+    NSInteger (*origFn)(id, SEL, UITableView *, NSInteger) = orig_mm_numberOfRows;
+    NSValue *classOrig = objc_getAssociatedObject(object_getClass(self), &kOrigNumberRowsKey);
+    if (classOrig) origFn = (NSInteger (*)(id, SEL, UITableView *, NSInteger))[classOrig pointerValue];
+    NSInteger orig = origFn ? origFn(self, _cmd, tableView, section) : 0;
     NSDictionary *config = aiConfigForTable(tableView);
     if (config && section == 1) return orig + 2; // AI 助手开关 + 清空记忆
     return orig;
 }
 
+// 自愈：如果表格的 dataSource 是 MMTableViewInfo 子类且覆写了行数方法，
+// 基类 hook 管不到它，这里把这个类也 hook 上（只影响带我们配置的表格）。
+// 返回 YES 表示“刚刚补挂”，调用方需要刷一次表格让新行数生效
+static BOOL ensureNumberRowsHookedForTable(UITableView *tableView) {
+    if (!tableView.dataSource) return NO;
+    Class ds = object_getClass(tableView.dataSource);
+    if (!ds) return NO;
+    if (objc_getAssociatedObject(ds, &kNumberRowsHookedKey)) return NO;
+    Method method = class_getInstanceMethod(ds, @selector(tableView:numberOfRowsInSection:));
+    if (!method) return NO;
+    IMP imp = method_getImplementation(method);
+    if (imp == (IMP)swz_mm_numberOfRows) {
+        // 已经是我们的实现（继承自已 hook 的父类），只需标记，避免重复包装
+        objc_setAssociatedObject(ds, &kNumberRowsHookedKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        return NO;
+    }
+    objc_setAssociatedObject(ds, &kOrigNumberRowsKey,
+                             [NSValue valueWithPointer:imp], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    objc_setAssociatedObject(ds, &kNumberRowsHookedKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    method_setImplementation(method, (IMP)swz_mm_numberOfRows);
+    return YES;
+}
+
 static UITableViewCell *(*orig_mm_cellForRow)(id, SEL, UITableView *, NSIndexPath *);
 static UITableViewCell *swz_mm_cellForRow(id self, SEL _cmd, UITableView *tableView, NSIndexPath *indexPath) {
+    if (ensureNumberRowsHookedForTable(tableView)) {
+        // 刚补挂行数扩展：这轮布局已经算完，主动刷一次让“清空记忆”立刻出现
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [tableView reloadData];
+        });
+    }
     NSDictionary *config = aiConfigForTable(tableView);
     if (config && indexPath.section == 1) {
         NSInteger insertRow = [config[@"row"] integerValue];
@@ -893,6 +928,7 @@ static UITableViewCell *swz_mm_cellForRow(id self, SEL _cmd, UITableView *tableV
 
 static void (*orig_mm_didSelect)(id, SEL, UITableView *, NSIndexPath *);
 static void swz_mm_didSelect(id self, SEL _cmd, UITableView *tableView, NSIndexPath *indexPath) {
+    ensureNumberRowsHookedForTable(tableView);
     NSDictionary *config = aiConfigForTable(tableView);
     if (config && indexPath.section == 1) {
         NSInteger insertRow = [config[@"row"] integerValue];
@@ -920,6 +956,7 @@ static void swz_mm_didSelect(id self, SEL _cmd, UITableView *tableView, NSIndexP
 
 static CGFloat (*orig_mm_heightForRow)(id, SEL, UITableView *, NSIndexPath *);
 static CGFloat swz_mm_heightForRow(id self, SEL _cmd, UITableView *tableView, NSIndexPath *indexPath) {
+    ensureNumberRowsHookedForTable(tableView);
     NSDictionary *config = aiConfigForTable(tableView);
     if (config && indexPath.section == 1) {
         NSInteger insertRow = [config[@"row"] integerValue];
