@@ -29,7 +29,9 @@ static NSString * const kAISettingsChatOverridesKey = @"WeChatAIChatOverrides";
 }
 
 + (NSString *)styleSamples {
-    return [[NSUserDefaults standardUserDefaults] stringForKey:kAISettingsStyleSamplesKey] ?: @"";
+    NSString *stored = [[NSUserDefaults standardUserDefaults] stringForKey:kAISettingsStyleSamplesKey];
+    if (stored.length > 0) return stored;
+    return kAIStyleSamplesDefault;
 }
 
 + (void)setStyleSamples:(NSString *)samples {

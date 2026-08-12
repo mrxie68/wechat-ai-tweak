@@ -520,7 +520,7 @@ static UITextField *makeRowField(NSString *placeholder) {
     [self refreshModeLabel];
     self.delayField.text = [NSString stringWithFormat:@"%.1f", kAIReplyDelaySeconds];
     self.textView.text = kAIAutoSystemPrompt;
-    self.styleView.text = @"";
+    self.styleView.text = kAIStyleSamplesDefault;
 }
 
 @end
