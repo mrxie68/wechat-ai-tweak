@@ -73,6 +73,17 @@ static NSString * const kAISettingsChatOverridesKey = @"WeChatAIChatOverrides";
     [defaults synchronize];
 }
 
++(void)clearAllStyleProfiles {
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    NSDictionary *all = [defaults dictionaryRepresentation];
+    for (NSString *key in all) {
+        if ([key hasPrefix:@"WeChatAIStyleProfile_"]) {
+            [defaults removeObjectForKey:key];
+        }
+    }
+    [defaults synchronize];
+}
+
 + (NSInteger)styleProfileCount {
     NSDictionary *all = [[NSUserDefaults standardUserDefaults] dictionaryRepresentation];
     NSInteger count = 0;

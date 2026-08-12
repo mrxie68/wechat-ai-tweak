@@ -10,6 +10,7 @@
 + (NSString *)styleProfileForChat:(NSString *)chatId;  // 自动学习的风格档案（按好友存）
 + (void)setStyleProfile:(NSString *)profile forChat:(NSString *)chatId;
 + (void)clearStyleProfileForChat:(NSString *)chatId;
++(void)clearAllStyleProfiles;           // 清掉所有好友的学习档案（设置页“清空全部记忆”用）
 + (NSInteger)styleProfileCount;        // 已学习的好友数量（状态里显示）
 + (NSString *)apiKey;                  // 同理
 + (void)setApiKey:(NSString *)key;

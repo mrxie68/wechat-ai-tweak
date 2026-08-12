@@ -383,15 +383,16 @@ static UITextField *makeRowField(NSString *placeholder) {
 
 - (void)memoryTapped {
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"清空全部记忆"
-                                                                   message:@"将清空所有会话的聊天上下文，AI 会忘记之前的对话，且无法恢复。确定清空？"
+                                                                   message:@"将清空所有会话的聊天上下文和已学习的风格档案，AI 会忘记之前的对话，且无法恢复。确定清空？"
                                                             preferredStyle:UIAlertControllerStyleAlert];
     [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
     [alert addAction:[UIAlertAction actionWithTitle:@"清空"
                                              style:UIAlertActionStyleDestructive
                                            handler:^(UIAlertAction *action) {
         [[AIContext shared] clearAll];
+        [AISettings clearAllStyleProfiles];
         UIAlertController *done = [UIAlertController alertControllerWithTitle:@"已清空"
-                                                                      message:@"全部会话的记忆已清空，AI 从现在开始重新了解上下文。"
+                                                                      message:@"全部会话的记忆和风格档案已清空，AI 从现在开始重新了解上下文。"
                                                                preferredStyle:UIAlertControllerStyleAlert];
         [done addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
         [self presentViewController:done animated:YES completion:nil];

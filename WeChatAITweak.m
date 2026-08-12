@@ -1262,15 +1262,16 @@ static NSMutableArray *g_recentReplyOrder = nil;
         UIViewController *top = tweakTopViewController();
         if (!top) return;
         UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"清空本会话记忆"
-                                                                       message:@"AI 将忘记这个会话之前的聊天内容，且无法恢复。确定清空？"
+                                                                       message:@"将清空这个会话的聊天上下文，并清除已学习的风格档案，AI 将忘记这个会话的一切，且无法恢复。确定清空？"
                                                                 preferredStyle:UIAlertControllerStyleAlert];
         [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
         [alert addAction:[UIAlertAction actionWithTitle:@"清空"
                                                  style:UIAlertActionStyleDestructive
                                                handler:^(UIAlertAction *action) {
             [[AIContext shared] clearChat:chatId];
+            [AISettings clearStyleProfileForChat:chatId];
             [self presentAlertWithTitle:@"已清空"
-                                message:@"本会话的记忆已清空，AI 从现在开始重新了解上下文。"];
+                                message:@"本会话的记忆和风格档案已清空，AI 从现在开始重新了解上下文。"];
         }]];
         [top presentViewController:alert animated:YES completion:nil];
     });
