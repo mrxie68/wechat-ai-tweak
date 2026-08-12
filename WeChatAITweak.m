@@ -124,16 +124,21 @@ static BOOL g_sendingReply = NO;
         NSString *toUsr = [wrap m_nsToUsr];
         if (content.length == 0 || fromUsr.length == 0) return;
 
-        // 自己发的消息不处理（本机发送由 SendTextMessage hook 记录上下文）
-        NSString *selfUsr = wechatSelfUsrName();
-        if (selfUsr.length > 0 && [fromUsr isEqualToString:selfUsr]) return;
-
         // 群聊会话 id 是 toUsr（@chatroom 结尾），单聊用 fromUsr
         BOOL isGroup = [toUsr containsString:@"@chatroom"];
         NSString *chatId = isGroup ? toUsr : fromUsr;
 
         // 白名单过滤：不在白名单里的会话直接忽略（不读取内容）
         if (!isChatAllowed(chatId)) return;
+
+        // 自己发的消息：本机发送由 SendTextMessage hook 记录上下文；
+        // 这里兜底识别 @AI 命令（部分微信版本发送 hook 不生效）
+        NSString *selfUsr = wechatSelfUsrName();
+        BOOL isSelf = (selfUsr.length > 0 && [fromUsr isEqualToString:selfUsr]);
+        if (isSelf) {
+            [self handlePossibleCommand:content chatId:chatId];
+            return;
+        }
 
         BOOL autoMode = isAutoMode();
 
@@ -176,6 +181,12 @@ static BOOL g_sendingReply = NO;
         if ([question isEqualToString:@"清空"] || [question isEqualToString:@"reset"]) {
             [[AIContext shared] clearChat:chatId];
             [self sendReply:@"✅ 上下文已清空" chatId:chatId];
+            return;
+        }
+
+        // 命令：打开微信内设置页（兜底路径：发送 hook 未生效时也能用）
+        if ([question isEqualToString:@"设置"] || [question isEqualToString:@"settings"]) {
+            [self handleCommand:@"settings" chatId:chatId];
             return;
         }
 
@@ -256,6 +267,14 @@ static BOOL g_sendingReply = NO;
         [[AIContext shared] appendAssistant:content chatId:chatId];
     } @catch (NSException *exception) {
         NSLog(kAITweakLogPrefix "记录发送消息异常: %@", exception);
+    }
+}
+
+// 收消息链路里的命令兜底：自己发的 @AI 命令也识别
++ (void)handlePossibleCommand:(NSString *)content chatId:(NSString *)chatId {
+    NSString *command = [self commandFromContent:content];
+    if (command) {
+        [self handleCommand:command chatId:chatId];
     }
 }
 
