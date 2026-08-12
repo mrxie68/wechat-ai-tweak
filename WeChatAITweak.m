@@ -783,10 +783,24 @@ static NSDictionary *aiConfigForTable(UITableView *tableView) {
                                 [title containsString:@"群聊信息"];
                 }
                 if (looksLike) {
-                    // 疑似聊天信息页：记录类名（未适配的类先只记录不插行，等确认后加入适配）
+                    // 疑似聊天信息页：记录类名和表格结构（未适配的类先只记录不插行）
                     g_chatTableVC = className;
-                    g_chatTableDiag = [NSString stringWithFormat:@"页面=%@%@",
-                                       className, isKnownClass ? @"" : @"（疑似聊天信息页，未适配）"];
+                    @try {
+                        NSInteger sections = [tableView numberOfSections];
+                        NSInteger s1Rows = sections > 1 ? [tableView numberOfRowsInSection:1] : -1;
+                        g_chatTableDiag = [NSString stringWithFormat:@"页面=%@%@ 表=%@ 数据源=%@ sections=%ld S1=%ld",
+                                           className,
+                                           isKnownClass ? @"" : @"（疑似聊天信息页，未适配）",
+                                           NSStringFromClass([tableView class]),
+                                           NSStringFromClass(object_getClass(tableView.dataSource)),
+                                           (long)sections, (long)s1Rows];
+                    } @catch (NSException *exception) {
+                        g_chatTableDiag = [NSString stringWithFormat:@"页面=%@%@ 表=%@ 数据源=%@",
+                                           className,
+                                           isKnownClass ? @"" : @"（疑似聊天信息页，未适配）",
+                                           NSStringFromClass([tableView class]),
+                                           NSStringFromClass(object_getClass(tableView.dataSource))];
+                    }
                     if (isKnownClass) {
                         config = aiBuildConfigForVC(vc, tableView);
                         if (config) {
