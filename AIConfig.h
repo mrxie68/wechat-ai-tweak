@@ -6,8 +6,9 @@
 //  改完这些以后 push 到 GitHub，Actions 会自动编译
 // ============================================================
 
-// API Key（DeepSeek 示例，去 https://platform.deepseek.com 申请）
-#define kAIAPIKey @"sk-REMOVED"
+// API Key：不再内置到代码里。安装后在 设置页 → API Key 里填写，存在微信本地，重启不丢。
+// 留空时 AI 不会工作，状态弹窗会提示“未填/过短”。
+#define kAIAPIKey @""
 
 // OpenAI 兼容接口地址（DeepSeek 默认）
 #define kAIBaseURL @"https://api.deepseek.com"
@@ -65,6 +66,6 @@
 #define kAITweakLogPrefix @"[WeChatAI] "
 
 // 插件版本（弹窗/状态命令会显示，方便确认手机上装的是不是最新编译）
-#define kAITweakVersion @"0.11.11"
+#define kAITweakVersion @"0.11.12"
 
 #endif

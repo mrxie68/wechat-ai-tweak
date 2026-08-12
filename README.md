@@ -14,11 +14,11 @@
 
 1. GitHub 账号。公开仓库免费不限时长；私有仓库每月 2000 分钟额度（macOS 按 10 倍扣，约 200 分钟，够用）。
 2. iPhone：TrollStore + TrollFools（或越狱机）。
-3. 一个 API Key。默认配的是 DeepSeek，去 [platform.deepseek.com](https://platform.deepseek.com) 注册充值即可。
+3. 一个 API Key。用的是 DeepSeek，去 [platform.deepseek.com](https://platform.deepseek.com) 注册充值生成（`sk-` 开头）。
 
 ## 快速开始
 
-1. 编辑 [AIConfig.h](AIConfig.h)，填上你的 API Key、模型名，并选择回复模式（`kAIReplyMode`：`auto` / `trigger`）。提示词有内置默认值，注入后也能在微信里改，不用为它重新编译。
+1. 源码里**不内置 API Key**，安装后到微信设置页 → API Key 里填写保存即可（存在微信本地，重启不丢）。模型、回复模式、提示词、基础信息也都能在设置页改，不用重新编译。
 2. 推送到 GitHub（仓库保持公开就有免费 macOS 编译时长）。
 3. 打开仓库的 Actions 标签，等 `Build WeChat AI` 跑完，下载 `wechat-ai-dylib` 这个 artifact，里面有 `wechat-ai.dylib`。
 4. iPhone 上把 dylib 分享给 TrollFools → 选择微信 → 注入 → 重启微信。
@@ -91,13 +91,13 @@
 - **上下文**：存在内存里，重启微信会清空；设置页或聊天信息页的“清空记忆”可手动清空。
 - **群聊**：默认关闭，先在群聊信息页打开“AI 助手”开关，之后群里所有消息都会自动回复（也可切到手动触发模式用 `@AI` 指定）。
 - **封号风险**：这是非官方注入插件，微信有检测手段，务必先用小号测试，风险自负。
-- **API Key 泄露**：公开仓库所有人都能看到源码。建议用单独充值的 key，或者仓库设私有（也能用，只是每月额度少一些）。
+- **API Key 安全**：源码里不保存 Key，只存在你手机微信本地，公开仓库也看不到。唯一注意：如果你是从旧版本（内置 Key）一路提交过来的，**旧 Key 还在 git 历史里**，公开仓库前请去 DeepSeek 后台作废旧 Key、换新的。
 
 ## 目录结构
 
 ```
 wechat-ai-tweak/
-├── AIConfig.h            # 改这里：API Key / 模型 / 触发词
+├── AIConfig.h            # 默认配置：模型 / 触发词 / 提示词（API Key 不在源码里）
 ├── AIContext.h/.m        # 会话上下文管理
 ├── AIAPIClient.h/.m      # OpenAI 兼容接口调用
 ├── WeChatAITweak.m       # 微信 hook + 触发逻辑

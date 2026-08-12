@@ -359,6 +359,7 @@ static UITextField *makeRowField(NSString *placeholder) {
 }
 
 - (NSString *)maskedKey:(NSString *)key {
+    if (key.length == 0) return @"";  // 未配置时显示占位符，而不是一串黑点
     if (key.length <= 8) return @"••••••••";
     return [NSString stringWithFormat:@"%@••••%@",
             [key substringToIndex:6],
