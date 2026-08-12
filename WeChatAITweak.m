@@ -15,6 +15,7 @@
 #import <stdlib.h>
 #import <string.h>
 #import <sqlite3.h>
+#import <CommonCrypto/CommonDigest.h>
 #import "AIConfig.h"
 #import "AIContext.h"
 #import "AIAPIClient.h"
@@ -255,6 +256,26 @@ static void aiAppendClassMethods(Class cls, NSMutableArray *hits, NSUInteger cap
     free(methods);
 }
 
+// 微信 iOS 的类名常见前缀；排除 Apple 系统类（AA-AZ 保留前缀、NS/UI/CA 等），
+// 避免深度体检被 Apple 的 Message 相关类刷屏
+static BOOL aiIsWeChatClass(NSString *name) {
+    if (name.length < 2) return NO;
+    if ([name hasPrefix:@"MM"] || [name hasPrefix:@"WC"] || [name hasPrefix:@"WX"] ||
+        [name hasPrefix:@"WeChat"] || [name hasPrefix:@"C"] || [name hasPrefix:@"DB"] ||
+        [name hasPrefix:@"Msg"] || [name hasPrefix:@"Message"] || [name hasPrefix:@"Chat"] ||
+        [name hasPrefix:@"Session"] || [name hasPrefix:@"WCDB"] || [name hasPrefix:@"Brand"] ||
+        [name hasPrefix:@"MicroMessenger"]) return YES;
+    unichar c0 = [name characterAtIndex:0];
+    unichar c1 = [name characterAtIndex:1];
+    if (c0 == 'A' && c1 >= 'A' && c1 <= 'Z') return NO;
+    NSArray *sys = @[@"NS", @"UI", @"CA", @"CF", @"CG", @"AV", @"CN", @"CL",
+                     @"PH", @"SK", @"MT", @"HK", @"OS", @"IO", @"CB"];
+    for (NSString *p in sys) {
+        if ([name hasPrefix:p]) return NO;
+    }
+    return NO;
+}
+
 static NSString *probeLoadedMessageClasses(void) {
     @try {
         NSMutableArray *matches = [NSMutableArray array];
@@ -267,7 +288,7 @@ static NSString *probeLoadedMessageClasses(void) {
         for (int i = 0; i < classCount; i++) {
             Class cls = classes[i];
             NSString *name = NSStringFromClass(cls);
-            if (name.length == 0 || !aiClassNameMatchesProbe(name)) continue;
+            if (name.length == 0 || !aiClassNameMatchesProbe(name) || !aiIsWeChatClass(name)) continue;
             NSMutableArray *hits = [NSMutableArray array];
             aiAppendClassMethods(cls, hits, 12);
             if (hits.count == 0) continue;
@@ -339,7 +360,7 @@ static NSArray *aiFindDatabaseFiles(void) {
             NSDictionary *attrs = [fm attributesOfItemAtPath:full error:nil];
             NSNumber *size = attrs[NSFileSize] ?: @0;
             [files addObject:@{@"path": full, @"rel": rel, @"size": size}];
-            if (files.count >= 25) break;
+            if (files.count >= 200) break;
         }
     }
     [files sortUsingComparator:^NSComparisonResult(id a, id b) {
@@ -351,6 +372,9 @@ static NSArray *aiFindDatabaseFiles(void) {
         if (aMsg != bMsg) return aMsg ? NSOrderedAscending : NSOrderedDescending;
         return [b[@"size"] compare:a[@"size"]];
     }];
+    if (files.count > 25) {
+        files = [[files subarrayWithRange:NSMakeRange(0, 25)] mutableCopy];
+    }
     return files;
 }
 
@@ -390,6 +414,10 @@ static BOOL aiIsMessageTable(NSString *name) {
     if ([lower hasPrefix:@"message"]) return YES;
     if ([lower rangeOfString:@"msg"].location != NSNotFound) return YES;
     if ([lower rangeOfString:@"message"].location != NSNotFound) return YES;
+    if ([lower rangeOfString:@"chat"].location != NSNotFound) return YES;
+    if ([lower rangeOfString:@"session"].location != NSNotFound) return YES;
+    if ([lower rangeOfString:@"history"].location != NSNotFound) return YES;
+    if ([lower rangeOfString:@"conversation"].location != NSNotFound) return YES;
     return NO;
 }
 
@@ -405,6 +433,17 @@ static NSString *aiPickColumn(NSArray *cols, NSArray *candidates) {
         }
     }
     return nil;
+}
+
+static NSString *aiMD5Hex(NSString *input) {
+    const char *cStr = [input UTF8String];
+    unsigned char digest[CC_MD5_DIGEST_LENGTH];
+    CC_MD5(cStr, (CC_LONG)strlen(cStr), digest);
+    NSMutableString *hex = [NSMutableString string];
+    for (int i = 0; i < CC_MD5_DIGEST_LENGTH; i++) {
+        [hex appendFormat:@"%02x", digest[i]];
+    }
+    return hex;
 }
 
 static NSString *probeDatabases(void) {
@@ -440,22 +479,26 @@ static NSString *probeDatabases(void) {
             NSArray *tables = aiSQLiteTableNames(db);
             int shown = 0;
             for (NSString *tbl in tables) {
-                if (shown >= 25) break;
+                if (shown >= 6) break;
                 if (!aiIsMessageTable(tbl)) continue;
                 NSArray *cols = aiSQLiteColumns(db, tbl);
                 NSMutableArray *colStr = [NSMutableArray array];
                 for (NSString *c in cols) {
                     [colStr addObject:c];
-                    if (colStr.count >= 20) break;
+                    if (colStr.count >= 12) break;
                 }
                 [sub addObject:[NSString stringWithFormat:@"  %@: [%@]",
                                 tbl, [colStr componentsJoinedByString:@", "]]];
                 shown++;
             }
+            if (tables.count > shown) {
+                [sub addObject:[NSString stringWithFormat:@"  …共%lu张消息表",
+                                (unsigned long)tables.count]];
+            }
             [lines addObject:[sub componentsJoinedByString:@"\n"]];
             sqlite3_close(db);
         }
-        return aiCapString([lines componentsJoinedByString:@"\n"], 2600);
+        return aiCapString([lines componentsJoinedByString:@"\n"], 4000);
     } @catch (NSException *e) {
         return [NSString stringWithFormat:@"DB 探测异常: %@", e];
     }
@@ -474,10 +517,50 @@ static NSString *probeDeepDiagnostics(void) {
 
 // ==================== 数据库直读（学习风格用，只查当前会话） ====================
 
-static NSArray<NSString *> *fetchRecentTextsFromDB(NSString *chatId, NSInteger limit) {
+static NSArray<NSString *> *aiQueryMessages(sqlite3 *db, NSString *table, NSString *textCol,
+                                            NSString *timeCol, NSString *userCol,
+                                            BOOL chatSpecific, NSString *chatId, NSInteger limit) {
+    NSMutableArray *rows = [NSMutableArray array];
+    NSMutableArray *wheres = [NSMutableArray array];
+    if (!chatSpecific && userCol) {
+        [wheres addObject:[NSString stringWithFormat:@"\"%@\" = ?",
+                           [userCol stringByReplacingOccurrencesOfString:@"\"" withString:@"\"\""]]];
+    }
+    NSString *whereSql = wheres.count
+        ? [NSString stringWithFormat:@" WHERE %@", [wheres componentsJoinedByString:@" AND "]]
+        : @"";
+    NSString *sql = [NSString stringWithFormat:
+                     @"SELECT \"%@\" FROM \"%@\"%@ ORDER BY \"%@\" DESC LIMIT %ld",
+                     [textCol stringByReplacingOccurrencesOfString:@"\"" withString:@"\"\""],
+                     [table stringByReplacingOccurrencesOfString:@"\"" withString:@"\"\""],
+                     whereSql,
+                     [timeCol stringByReplacingOccurrencesOfString:@"\"" withString:@"\"\""],
+                     (long)limit];
+    sqlite3_stmt *stmt = NULL;
+    if (sqlite3_prepare_v2(db, [sql UTF8String], -1, &stmt, NULL) == SQLITE_OK) {
+        if (!chatSpecific && userCol) {
+            sqlite3_bind_text(stmt, 1, [chatId UTF8String], -1, SQLITE_TRANSIENT);
+        }
+        while (sqlite3_step(stmt) == SQLITE_ROW) {
+            const unsigned char *txt = sqlite3_column_text(stmt, 0);
+            if (!txt) continue;
+            NSString *content = [NSString stringWithUTF8String:(const char *)txt];
+            if (content.length > 0 && ![content hasPrefix:@"<msg"]) {
+                [rows addObject:content];
+            }
+        }
+    }
+    sqlite3_finalize(stmt);
+    return rows;
+}
+
+static NSArray<NSString *> *fetchRecentTextsFromDB(NSString *chatId, NSInteger limit, NSString **dbDiag) {
     NSMutableArray *texts = [NSMutableArray array];
     if (chatId.length == 0 || limit <= 0) return texts;
+    // 微信的消息表有两种命名：Chat_<原始id> 或 Chat_<md5(id)>（BrandMsg.db 里就是 md5）
     NSString *exactChatTable = [@"Chat_" stringByAppendingString:chatId];
+    NSString *md5ChatTable = [@"Chat_" stringByAppendingString:aiMD5Hex(chatId)];
+    NSInteger fileCount = 0, tableCount = 0, queryCount = 0;
     NSArray *dbs = aiFindDatabaseFiles();
     for (NSDictionary *d in dbs) {
         NSString *full = d[@"path"];
@@ -489,54 +572,37 @@ static NSArray<NSString *> *fetchRecentTextsFromDB(NSString *chatId, NSInteger l
             continue;
         }
         sqlite3_busy_timeout(db, 2000);
+        fileCount++;
         NSArray *tables = aiSQLiteTableNames(db);
         for (NSString *tbl in tables) {
             if (!aiIsMessageTable(tbl)) continue;
-            BOOL chatSpecific = [tbl isEqualToString:exactChatTable];
+            tableCount++;
+            BOOL chatSpecific = [tbl isEqualToString:exactChatTable] || [tbl isEqualToString:md5ChatTable];
             NSArray *cols = aiSQLiteColumns(db, tbl);
-            NSString *textCol = aiPickColumn(cols, @[@"Des", @"des", @"Content", @"content",
-                                                     @"Text", @"text", @"msgContent", @"MsgContent",
-                                                     @"messageContent", @"MessageContent", @"Message"]);
             NSString *timeCol = aiPickColumn(cols, @[@"CreateTime", @"createTime", @"Time", @"time",
                                                      @"timestamp", @"msgCreateTime", @"MsgCreateTime",
                                                      @"localCreateTime", @"LocalCreateTime"]);
             NSString *userCol = aiPickColumn(cols, @[@"UserName", @"usrName", @"Username",
                                                      @"FromUser", @"fromUser", @"FromUsr", @"fromUsr",
-                                                     @"sessionId", @"SessionId", @"chatName", @"ChatName"]);
-            if (!textCol || !timeCol) continue;
+                                                     @"sessionId", @"SessionId", @"chatName", @"ChatName",
+                                                     @"Session", @"session", @"Chat", @"chat",
+                                                     @"ChatId", @"chatId", @"nsFromUsr"]);
+            if (!timeCol) continue;
             // 统一消息表必须能按会话过滤；Chat_ 专属表本身就是一个会话
             if (!chatSpecific && !userCol) continue;
-
-            NSMutableArray *wheres = [NSMutableArray array];
-            if (!chatSpecific && userCol) {
-                [wheres addObject:[NSString stringWithFormat:@"\"%@\" = ?",
-                                   [userCol stringByReplacingOccurrencesOfString:@"\"" withString:@"\"\""]]];
+            queryCount++;
+            // 内容列可能有多个（Des/Message/Content…），按优先级试到有结果为止
+            NSArray *textCandidates = @[@"Des", @"Message", @"Content", @"Text",
+                                        @"msgContent", @"MsgContent",
+                                        @"messageContent", @"MessageContent"];
+            for (NSString *tc in textCandidates) {
+                NSString *textCol = aiPickColumn(cols, @[tc]);
+                if (!textCol) continue;
+                NSArray *rows = aiQueryMessages(db, tbl, textCol, timeCol, userCol,
+                                                chatSpecific, chatId, limit);
+                [texts addObjectsFromArray:rows];
+                if (texts.count > 0) break;
             }
-            NSString *whereSql = wheres.count
-                ? [NSString stringWithFormat:@" WHERE %@", [wheres componentsJoinedByString:@" AND "]]
-                : @"";
-            NSString *sql = [NSString stringWithFormat:
-                             @"SELECT \"%@\" FROM \"%@\"%@ ORDER BY \"%@\" DESC LIMIT %ld",
-                             [textCol stringByReplacingOccurrencesOfString:@"\"" withString:@"\"\""],
-                             [tbl stringByReplacingOccurrencesOfString:@"\"" withString:@"\"\""],
-                             whereSql,
-                             [timeCol stringByReplacingOccurrencesOfString:@"\"" withString:@"\"\""],
-                             (long)limit];
-            sqlite3_stmt *stmt = NULL;
-            if (sqlite3_prepare_v2(db, [sql UTF8String], -1, &stmt, NULL) == SQLITE_OK) {
-                if (!chatSpecific && userCol) {
-                    sqlite3_bind_text(stmt, 1, [chatId UTF8String], -1, SQLITE_TRANSIENT);
-                }
-                while (sqlite3_step(stmt) == SQLITE_ROW) {
-                    const unsigned char *txt = sqlite3_column_text(stmt, 0);
-                    if (!txt) continue;
-                    NSString *content = [NSString stringWithUTF8String:(const char *)txt];
-                    if (content.length > 0 && ![content hasPrefix:@"<msg"]) {
-                        [texts addObject:content];
-                    }
-                }
-            }
-            sqlite3_finalize(stmt);
             if (texts.count >= (NSUInteger)limit) break;
         }
         sqlite3_close(db);
@@ -544,6 +610,11 @@ static NSArray<NSString *> *fetchRecentTextsFromDB(NSString *chatId, NSInteger l
     }
     if (texts.count > (NSUInteger)limit) {
         [texts removeObjectsInRange:NSMakeRange(0, texts.count - (NSUInteger)limit)];
+    }
+    if (dbDiag) {
+        *dbDiag = [NSString stringWithFormat:@"[文件%ld/消息表%ld/可查%ld/行%lu]",
+                   (long)fileCount, (long)tableCount, (long)queryCount,
+                   (unsigned long)texts.count];
     }
     // 查询是倒序（新的在前），反转成时间正序给 AI
     return [[texts reverseObjectEnumerator] allObjects];
@@ -559,15 +630,17 @@ static NSArray<NSString *> *fetchRecentTexts(NSString *chatId, NSInteger limit, 
     }
 
     // 路径 C（优先）：直接读消息数据库，只查当前会话；速度快且不依赖私有接口
-    NSArray *dbTexts = fetchRecentTextsFromDB(chatId, limit);
+    NSString *dbDiag = @"";
+    NSArray *dbTexts = fetchRecentTextsFromDB(chatId, limit, &dbDiag);
     if (dbTexts.count > 0) {
         [texts addObjectsFromArray:dbTexts];
-        [diagParts addObject:[NSString stringWithFormat:@"C(DB直读)有,拿%lu条",
+        [diagParts addObject:[NSString stringWithFormat:@"C(DB直读)有%@,拿%lu条",
+                              dbDiag,
                               (unsigned long)dbTexts.count]];
         if (diag) *diag = [diagParts componentsJoinedByString:@"；"];
         return texts;
     }
-    [diagParts addObject:@"C(DB直读)无"];
+    [diagParts addObject:[NSString stringWithFormat:@"C(DB直读)无%@", dbDiag]];
 
     CMessageMgr *mgr = wechatMessageMgr();
     if (!mgr) {
