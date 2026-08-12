@@ -39,6 +39,8 @@
 - (void)SendTextMessage:(NSString *)content toUsrName:(NSString *)usrName;
 - (void)SendMessage:(id)msgWrap isSendByWeChat:(BOOL)flag;
 - (void)AddMsg:(id)arg1 MsgWrap:(id)arg2;
+- (id)GetFirstMsg:(NSString *)nsFromUsr;
+- (id)GetNextMsg:(NSString *)nsFromUsr fromMsg:(id)msg;
 @end
 
 @interface WCMessageService : NSObject
