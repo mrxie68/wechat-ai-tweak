@@ -89,9 +89,9 @@ static NSArray<NSDictionary *> *aiParseFewShotSamples(NSString *samples, NSUInte
     NSDictionary *body = @{
         @"model": [AISettings model],
         @"messages": payload,
-        @"temperature": @(kAIRequestTemperature),
-        @"frequency_penalty": @(kAIRequestFrequencyPenalty),
-        @"presence_penalty": @(kAIRequestPresencePenalty)
+        @"temperature": @([AISettings temperature]),
+        @"frequency_penalty": @([AISettings frequencyPenalty]),
+        @"presence_penalty": @([AISettings presencePenalty])
     };
 
     NSError *jsonError = nil;

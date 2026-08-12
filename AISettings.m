@@ -9,6 +9,9 @@ static NSString * const kAISettingsModelKey = @"WeChatAIModel";
 static NSString * const kAISettingsReplyModeKey = @"WeChatAIReplyMode";
 static NSString * const kAISettingsEnabledKey = @"WeChatAIEnabled";
 static NSString * const kAISettingsReplyDelayKey = @"WeChatAIReplyDelay";
+static NSString * const kAISettingsTemperatureKey = @"WeChatAITemperature";
+static NSString * const kAISettingsFrequencyPenaltyKey = @"WeChatAIFrequencyPenalty";
+static NSString * const kAISettingsPresencePenaltyKey = @"WeChatAIPresencePenalty";
 static NSString * const kAISettingsChatOverridesKey = @"WeChatAIChatOverrides";
 
 @implementation AISettings
@@ -186,6 +189,42 @@ static NSString * const kAISettingsChatOverridesKey = @"WeChatAIChatOverrides";
 + (void)setReplyDelay:(double)delay {
     NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
     [defaults setDouble:delay forKey:kAISettingsReplyDelayKey];
+    [defaults synchronize];
+}
+
++(double)temperature {
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    if ([defaults objectForKey:kAISettingsTemperatureKey] == nil) return kAIRequestTemperature;
+    return [defaults doubleForKey:kAISettingsTemperatureKey];
+}
+
++(void)setTemperature:(double)value {
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    [defaults setDouble:value forKey:kAISettingsTemperatureKey];
+    [defaults synchronize];
+}
+
++(double)frequencyPenalty {
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    if ([defaults objectForKey:kAISettingsFrequencyPenaltyKey] == nil) return kAIRequestFrequencyPenalty;
+    return [defaults doubleForKey:kAISettingsFrequencyPenaltyKey];
+}
+
++(void)setFrequencyPenalty:(double)value {
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    [defaults setDouble:value forKey:kAISettingsFrequencyPenaltyKey];
+    [defaults synchronize];
+}
+
++(double)presencePenalty {
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    if ([defaults objectForKey:kAISettingsPresencePenaltyKey] == nil) return kAIRequestPresencePenalty;
+    return [defaults doubleForKey:kAISettingsPresencePenaltyKey];
+}
+
++(void)setPresencePenalty:(double)value {
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    [defaults setDouble:value forKey:kAISettingsPresencePenaltyKey];
     [defaults synchronize];
 }
 

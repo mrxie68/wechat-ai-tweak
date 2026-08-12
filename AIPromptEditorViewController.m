@@ -29,6 +29,13 @@
 @property (nonatomic, strong) UIView *delayCard;
 @property (nonatomic, strong) UILabel *delayLabel;
 @property (nonatomic, strong) UITextField *delayField;
+@property (nonatomic, strong) UIView *paramCard;
+@property (nonatomic, strong) UILabel *tempLabel;
+@property (nonatomic, strong) UITextField *tempField;
+@property (nonatomic, strong) UILabel *freqLabel;
+@property (nonatomic, strong) UITextField *freqField;
+@property (nonatomic, strong) UILabel *presLabel;
+@property (nonatomic, strong) UITextField *presField;
 @property (nonatomic, strong) UIView *promptCard;
 @property (nonatomic, strong) UILabel *promptLabel;
 @property (nonatomic, strong) UITextView *textView;
@@ -189,6 +196,28 @@ static UITextField *makeRowField(NSString *placeholder) {
     self.delayField.text = [NSString stringWithFormat:@"%.1f", [AISettings replyDelay]];
     [self.delayCard addSubview:self.delayField];
 
+    // 高级参数（温度 / 频率惩罚 / 存在惩罚）
+    self.paramCard = makeCard();
+    [self.contentView addSubview:self.paramCard];
+    self.tempLabel = makeRowLabel(@"温度");
+    [self.paramCard addSubview:self.tempLabel];
+    self.tempField = makeRowField(@"0~2");
+    self.tempField.keyboardType = UIKeyboardTypeDecimalPad;
+    self.tempField.text = [NSString stringWithFormat:@"%.2f", [AISettings temperature]];
+    [self.paramCard addSubview:self.tempField];
+    self.freqLabel = makeRowLabel(@"频率惩罚");
+    [self.paramCard addSubview:self.freqLabel];
+    self.freqField = makeRowField(@"0~2");
+    self.freqField.keyboardType = UIKeyboardTypeDecimalPad;
+    self.freqField.text = [NSString stringWithFormat:@"%.2f", [AISettings frequencyPenalty]];
+    [self.paramCard addSubview:self.freqField];
+    self.presLabel = makeRowLabel(@"存在惩罚");
+    [self.paramCard addSubview:self.presLabel];
+    self.presField = makeRowField(@"0~2");
+    self.presField.keyboardType = UIKeyboardTypeDecimalPad;
+    self.presField.text = [NSString stringWithFormat:@"%.2f", [AISettings presencePenalty]];
+    [self.paramCard addSubview:self.presField];
+
     // 系统提示词
     self.promptCard = makeCard();
     [self.contentView addSubview:self.promptCard];
@@ -303,6 +332,8 @@ static UITextField *makeRowField(NSString *placeholder) {
     y += rowHeight + gap;
     self.delayCard.frame = CGRectMake(margin, y, cardWidth, rowHeight);
     y += rowHeight + 12;
+    self.paramCard.frame = CGRectMake(margin, y, cardWidth, rowHeight * 3);
+    y += rowHeight * 3 + 12;
 
     CGFloat textCardHeight = 150;
     self.promptCard.frame = CGRectMake(margin, y, cardWidth, textCardHeight);
@@ -336,6 +367,13 @@ static UITextField *makeRowField(NSString *placeholder) {
     self.modelValueLabel.frame = CGRectMake(130, 0, cardWidth - 130 - 26, rowHeight);
 
     [self layoutLabel:self.delayLabel field:self.delayField cardWidth:cardWidth];
+
+    self.tempLabel.frame = CGRectMake(16, 0, 110, rowHeight);
+    self.tempField.frame = CGRectMake(130, 0, cardWidth - 130 - 14, rowHeight);
+    self.freqLabel.frame = CGRectMake(16, rowHeight, 110, rowHeight);
+    self.freqField.frame = CGRectMake(130, rowHeight, cardWidth - 130 - 14, rowHeight);
+    self.presLabel.frame = CGRectMake(16, rowHeight * 2, 110, rowHeight);
+    self.presField.frame = CGRectMake(130, rowHeight * 2, cardWidth - 130 - 14, rowHeight);
 
     self.promptLabel.frame = CGRectMake(16, 12, cardWidth - 32, 20);
     self.textView.frame = CGRectMake(12, 38, cardWidth - 24, textCardHeight - 38 - 26);
@@ -534,6 +572,12 @@ static UITextField *makeRowField(NSString *placeholder) {
     [AISettings setReplyMode:self.pendingMode];
     double delay = [self.delayField.text doubleValue];
     [AISettings setReplyDelay:(delay > 0 && delay <= 30) ? delay : kAIReplyDelaySeconds];
+    double temp = [self.tempField.text doubleValue];
+    [AISettings setTemperature:(temp >= 0 && temp <= 2) ? temp : kAIRequestTemperature];
+    double freq = [self.freqField.text doubleValue];
+    [AISettings setFrequencyPenalty:(freq >= 0 && freq <= 2) ? freq : kAIRequestFrequencyPenalty];
+    double pres = [self.presField.text doubleValue];
+    [AISettings setPresencePenalty:(pres >= 0 && pres <= 2) ? pres : kAIRequestPresencePenalty];
     [AISettings setAutoSystemPrompt:self.textView.text];
     [AISettings setStyleSamples:self.styleView.text];
     [AISettings setUserProfile:self.profileView.text];
@@ -550,6 +594,9 @@ static UITextField *makeRowField(NSString *placeholder) {
     self.pendingMode = kAIReplyMode;
     [self refreshModeLabel];
     self.delayField.text = [NSString stringWithFormat:@"%.1f", kAIReplyDelaySeconds];
+    self.tempField.text = [NSString stringWithFormat:@"%.2f", kAIRequestTemperature];
+    self.freqField.text = [NSString stringWithFormat:@"%.2f", kAIRequestFrequencyPenalty];
+    self.presField.text = [NSString stringWithFormat:@"%.2f", kAIRequestPresencePenalty];
     self.textView.text = kAIAutoSystemPrompt;
     self.styleView.text = kAIStyleSamplesDefault;
     self.profileView.text = kAIUserProfile;

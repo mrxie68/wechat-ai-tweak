@@ -24,6 +24,12 @@
 + (void)setEnabled:(BOOL)enabled;
 + (double)replyDelay;                  // 思考延迟（秒）
 + (void)setReplyDelay:(double)delay;
++(double)temperature;                  // 请求温度（默认 0.5）
++(void)setTemperature:(double)value;
++(double)frequencyPenalty;             // 频率惩罚（默认 0.4）
++(void)setFrequencyPenalty:(double)value;
++(double)presencePenalty;              // 存在惩罚（默认 0.4）
++(void)setPresencePenalty:(double)value;
 + (BOOL)chatEnabled:(NSString *)chatId defaultEnabled:(BOOL)defaultEnabled; // 会话级开关
 + (void)setChatEnabled:(BOOL)enabled chatId:(NSString *)chatId;
 + (BOOL)chatEnabled:(NSString *)chatId;   // 默认关闭，只有聊天信息页单独开过才回

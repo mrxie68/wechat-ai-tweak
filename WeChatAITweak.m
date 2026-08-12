@@ -618,6 +618,7 @@ static void *kAISwitchChatKey = &kAISwitchChatKey;  // 开关 -> chatId
 static NSObject *g_replyLock = nil;
 static NSMutableSet *g_recentReplies = nil;
 static NSMutableArray *g_recentReplyOrder = nil;
+static BOOL g_aiSending = NO;  // 插件自己发消息期间为 YES，发送 hook 据此跳过（AI 回复发出前已记录）
 
 + (void)noteReplySent:(NSString *)text chatId:(NSString *)chatId {
     if (text.length == 0 || chatId.length == 0) return;
@@ -643,6 +644,18 @@ static NSMutableArray *g_recentReplyOrder = nil;
     @synchronized (g_replyLock) {
         return [g_recentReplies containsObject:key];
     }
+}
+
+// 捕获用户手动发送（发送路径 hook）：记进上下文。
+// 回显稍后也会到达，靠“最近发送”缓存去重，不会记两遍。
++ (void)recordUserSentMessage:(NSString *)content chatId:(NSString *)chatId timestamp:(unsigned int)timestamp {
+    if (content.length == 0 || chatId.length == 0) return;
+    if (![AISettings enabled] || !isAutoMode()) return;
+    if (!isChatAllowed(chatId)) return;
+    if ([self isRecentReply:content chatId:chatId]) return; // 其他路径已记过
+    [self noteReplySent:content chatId:chatId];
+    [[AIContext shared] appendAssistant:content timestamp:timestamp chatId:chatId];
+    NSLog(kAITweakLogPrefix "记录手动发送(%@): %@", chatId, content);
 }
 
 // 账号隔离：检测到当前微信账号变化时清空全部上下文，避免把上一个账号的对话带过去
@@ -992,51 +1005,56 @@ static NSMutableArray *g_recentReplyOrder = nil;
         // 尝试多种发送接口：SendTextMessage → AddMsg:MsgWrap:（8.0.55 主路径）→ SendMessage:isSendByWeChat:
         BOOL sent = NO;
 
-        if ([mgr respondsToSelector:@selector(SendTextMessage:toUsrName:)]) {
-            [mgr SendTextMessage:text toUsrName:chatId];
-            sent = YES;
-        } else if ([mgr respondsToSelector:@selector(AddMsg:MsgWrap:)]) {
-            // 8.0.5x 的发送接口：构造 CMessageWrap 后 AddMsg
-            Class wrapCls = NSClassFromString(@"CMessageWrap");
-            if (wrapCls) {
-                NSString *selfUsr = wechatSelfUsrName();
-                CMessageWrap *wrap = nil;
-                if (selfUsr.length > 0) {
-                    wrap = [[wrapCls alloc] initWithMsgType:1 nsFromUsr:selfUsr];
-                } else {
-                    wrap = [[wrapCls alloc] initWithMsgType:1];
+        g_aiSending = YES;
+        @try {
+            if ([mgr respondsToSelector:@selector(SendTextMessage:toUsrName:)]) {
+                [mgr SendTextMessage:text toUsrName:chatId];
+                sent = YES;
+            } else if ([mgr respondsToSelector:@selector(AddMsg:MsgWrap:)]) {
+                // 8.0.5x 的发送接口：构造 CMessageWrap 后 AddMsg
+                Class wrapCls = NSClassFromString(@"CMessageWrap");
+                if (wrapCls) {
+                    NSString *selfUsr = wechatSelfUsrName();
+                    CMessageWrap *wrap = nil;
+                    if (selfUsr.length > 0) {
+                        wrap = [[wrapCls alloc] initWithMsgType:1 nsFromUsr:selfUsr];
+                    } else {
+                        wrap = [[wrapCls alloc] initWithMsgType:1];
+                    }
+                    if (wrap) {
+                        [wrap setM_nsContent:text];
+                        [wrap setM_nsToUsr:chatId];
+                        [wrap setM_uiMessageType:1];
+                        [wrap setM_uiCreateTime:(unsigned int)time(NULL)];
+                        [wrap setM_uiStatus:1];
+                        [mgr AddMsg:chatId MsgWrap:wrap];
+                        sent = YES;
+                    }
                 }
+            } else {
+                // 构造一个文本消息对象，走新版发送接口
+                CMessageWrap *wrap = [[NSClassFromString(@"CMessageWrap") alloc] init];
                 if (wrap) {
                     [wrap setM_nsContent:text];
                     [wrap setM_nsToUsr:chatId];
                     [wrap setM_uiMessageType:1];
-                    [wrap setM_uiCreateTime:(unsigned int)time(NULL)];
-                    [wrap setM_uiStatus:1];
-                    [mgr AddMsg:chatId MsgWrap:wrap];
-                    sent = YES;
-                }
-            }
-        } else {
-            // 构造一个文本消息对象，走新版发送接口
-            CMessageWrap *wrap = [[NSClassFromString(@"CMessageWrap") alloc] init];
-            if (wrap) {
-                [wrap setM_nsContent:text];
-                [wrap setM_nsToUsr:chatId];
-                [wrap setM_uiMessageType:1];
 
-                id service = mgr;
-                Class serviceCls = NSClassFromString(@"WCMessageService");
-                Class centerCls = NSClassFromString(@"MMServiceCenter");
-                id center = centerCls ? [(id)centerCls defaultCenter] : nil;
-                if (serviceCls && center) {
-                    id s = [center getService:serviceCls];
-                    if (s) service = s;
-                }
-                if ([service respondsToSelector:@selector(SendMessage:isSendByWeChat:)]) {
-                    [service SendMessage:wrap isSendByWeChat:YES];
-                    sent = YES;
+                    id service = mgr;
+                    Class serviceCls = NSClassFromString(@"WCMessageService");
+                    Class centerCls = NSClassFromString(@"MMServiceCenter");
+                    id center = centerCls ? [(id)centerCls defaultCenter] : nil;
+                    if (serviceCls && center) {
+                        id s = [center getService:serviceCls];
+                        if (s) service = s;
+                    }
+                    if ([service respondsToSelector:@selector(SendMessage:isSendByWeChat:)]) {
+                        [service SendMessage:wrap isSendByWeChat:YES];
+                        sent = YES;
+                    }
                 }
             }
+        } @finally {
+            g_aiSending = NO;
         }
 
         if (sent) {
@@ -1259,6 +1277,32 @@ static void swz_MainThreadNotifyToExt(id self, SEL _cmd, NSDictionary *ext) {
 static void swz_SendTextMessage(id self, SEL _cmd, NSString *content, NSString *usrName) {
     if (orig_SendTextMessage) {
         orig_SendTextMessage(self, _cmd, content, usrName);
+    }
+}
+
+static void (*orig_AddMsg)(id, SEL, NSString *, CMessageWrap *);
+
+// 捕获本机手动发送（8.0.5x 没有 SendTextMessage，发送走 AddMsg:MsgWrap:）。
+// 只记“自己发的文本”；AI 自己发的靠 g_aiSending 跳过；回显到达时靠最近发送缓存去重。
+static void swz_AddMsg(id self, SEL _cmd, NSString *chatId, CMessageWrap *wrap) {
+    if (orig_AddMsg) {
+        orig_AddMsg(self, _cmd, chatId, wrap);
+    }
+    @try {
+        if (g_aiSending) return;
+        if (!wrap || chatId.length == 0) return;
+        if (![wrap isKindOfClass:NSClassFromString(@"CMessageWrap")]) return;
+        NSString *selfUsr = wechatSelfUsrName();
+        if (selfUsr.length == 0 || ![[wrap m_nsFromUsr] isEqualToString:selfUsr]) return;
+        if ([wrap m_uiMessageType] != 1) return;
+        NSString *content = [wrap m_nsContent];
+        if (content.length == 0) return;
+        unsigned int ts = [wrap respondsToSelector:@selector(m_uiCreateTime)]
+            ? (unsigned int)[wrap m_uiCreateTime]
+            : (unsigned int)time(NULL);
+        [WeChatAIHandler recordUserSentMessage:content chatId:chatId timestamp:ts];
+    } @catch (NSException *exception) {
+        NSLog(kAITweakLogPrefix "AddMsg 捕获发送记录异常: %@", exception);
     }
 }
 
@@ -1743,7 +1787,18 @@ static int installHooks(void) {
         g_hookSend = YES;
         NSLog(kAITweakLogPrefix "hook 安装成功: SendTextMessage:toUsrName:");
     } else {
-        NSLog(kAITweakLogPrefix "没有找到 SendTextMessage:toUsrName:，本机发送记录将不可用");
+        NSLog(kAITweakLogPrefix "没有找到 SendTextMessage:toUsrName:，继续尝试 AddMsg 发送路径");
+    }
+
+    // 8.0.5x 的主发送路径：AddMsg:MsgWrap:，同时用来捕获用户手动发送
+    Method addMsgMethod = class_getInstanceMethod(cls, @selector(AddMsg:MsgWrap:));
+    if (addMsgMethod) {
+        orig_AddMsg = (void *)method_getImplementation(addMsgMethod);
+        method_setImplementation(addMsgMethod, (IMP)swz_AddMsg);
+        g_hookSend = YES;
+        NSLog(kAITweakLogPrefix "hook 安装成功: AddMsg:MsgWrap:（发送记录）");
+    } else {
+        NSLog(kAITweakLogPrefix "没有找到 AddMsg:MsgWrap:，发送记录仍依赖回显");
     }
 
     // 聊天信息页插入“AI 助手”开关行
