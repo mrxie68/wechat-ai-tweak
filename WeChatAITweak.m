@@ -24,10 +24,12 @@
 @property (nonatomic, retain) NSString *m_nsFromUsr;
 @property (nonatomic, retain) NSString *m_nsToUsr;
 @property (nonatomic, assign) unsigned int m_uiMessageType;
+@property (nonatomic, assign) unsigned int m_uiCreateTime;
 @end
 
 @interface CMessageMgr : NSObject
 - (void)AsyncOnAddMsg:(id)arg1 MsgWrap:(CMessageWrap *)wrap;
+- (void)MainThreadNotifyToExt:(NSDictionary *)ext;
 - (void)SendTextMessage:(NSString *)content toUsrName:(NSString *)usrName;
 @end
 
@@ -82,6 +84,37 @@ static BOOL isChatAllowed(NSString *chatId) {
     return NO;
 }
 
+// ===== 消息去重（新旧两条收消息 hook 同时安装，防止同一条消息处理两次）=====
+static NSObject *g_dedupLock = nil;
+static NSMutableSet *g_seenKeys = nil;
+static NSMutableArray *g_seenOrder = nil;
+
+static NSString *messageKey(CMessageWrap *wrap) {
+    NSString *from = [wrap m_nsFromUsr] ?: @"";
+    NSString *content = [wrap m_nsContent] ?: @"";
+    unsigned int createTime = 0;
+    if ([wrap respondsToSelector:@selector(m_uiCreateTime)]) {
+        createTime = (unsigned int)[wrap m_uiCreateTime];
+    }
+    return [NSString stringWithFormat:@"%@|%@|%u", from, content, createTime];
+}
+
+static BOOL isDuplicateMessage(CMessageWrap *wrap) {
+    NSString *key = messageKey(wrap);
+    if (key.length == 0) return NO;
+    @synchronized (g_dedupLock) {
+        if ([g_seenKeys containsObject:key]) return YES;
+        [g_seenKeys addObject:key];
+        [g_seenOrder addObject:key];
+        if (g_seenOrder.count > 100) {
+            NSString *oldest = [g_seenOrder firstObject];
+            [g_seenOrder removeObjectAtIndex:0];
+            [g_seenKeys removeObject:oldest];
+        }
+    }
+    return NO;
+}
+
 // 找到当前最上层的控制器，用于弹出设置页
 static UIViewController *tweakTopViewController(void) {
     UIApplication *app = [UIApplication sharedApplication];
@@ -123,6 +156,9 @@ static BOOL g_sendingReply = NO;
         NSString *fromUsr = [wrap m_nsFromUsr];
         NSString *toUsr = [wrap m_nsToUsr];
         if (content.length == 0 || fromUsr.length == 0) return;
+
+        // 新旧收消息 hook 可能同时触发，去重
+        if (isDuplicateMessage(wrap)) return;
 
         // 群聊会话 id 是 toUsr（@chatroom 结尾），单聊用 fromUsr
         BOOL isGroup = [toUsr containsString:@"@chatroom"];
@@ -250,7 +286,8 @@ static BOOL g_sendingReply = NO;
             }
             if (error) {
                 NSLog(kAITweakLogPrefix "自动回复失败: %@", error);
-                return; // 失败就不打扰，等对方下一条
+                [self sendReply:@"⚠️ AI 调用失败（请检查 API Key / 网络 / 余额）" chatId:chatId];
+                return;
             }
             // 发送 hook 会把这条回复记进上下文
             [self sendReply:reply chatId:chatId];
@@ -285,6 +322,7 @@ static BOOL g_sendingReply = NO;
     question = [question stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
     if ([question isEqualToString:@"设置"] || [question isEqualToString:@"settings"]) return @"settings";
     if ([question isEqualToString:@"清空"] || [question isEqualToString:@"reset"]) return @"clear";
+    if ([question isEqualToString:@"测试"] || [question isEqualToString:@"test"]) return @"test";
     return nil;
 }
 
@@ -303,6 +341,9 @@ static BOOL g_sendingReply = NO;
     } else if ([command isEqualToString:@"clear"]) {
         [[AIContext shared] clearChat:chatId];
         [self sendReply:@"✅ 上下文已清空" chatId:chatId];
+    } else if ([command isEqualToString:@"test"]) {
+        // 本地链路测试：不调用 API，能收到并回这条就说明收/发 hook 都正常
+        [self sendReply:@"✅ 收到，插件链路正常（本地测试，未调用 API）" chatId:chatId];
     }
 }
 
@@ -337,6 +378,7 @@ static BOOL g_sendingReply = NO;
 #pragma mark - Hook 安装
 
 static void (*orig_AsyncOnAddMsg)(id, SEL, id, CMessageWrap *);
+static void (*orig_MainThreadNotifyToExt)(id, SEL, NSDictionary *);
 static void (*orig_SendTextMessage)(id, SEL, NSString *, NSString *);
 
 static void swz_AsyncOnAddMsg(id self, SEL _cmd, id arg1, CMessageWrap *wrap) {
@@ -344,6 +386,21 @@ static void swz_AsyncOnAddMsg(id self, SEL _cmd, id arg1, CMessageWrap *wrap) {
         orig_AsyncOnAddMsg(self, _cmd, arg1, wrap);
     }
     [WeChatAIHandler handleIncomingMessage:wrap];
+}
+
+static void swz_MainThreadNotifyToExt(id self, SEL _cmd, NSDictionary *ext) {
+    if (orig_MainThreadNotifyToExt) {
+        orig_MainThreadNotifyToExt(self, _cmd, ext);
+    }
+    @try {
+        if (![ext isKindOfClass:[NSDictionary class]]) return;
+        CMessageWrap *wrap = ext[@"3"];
+        if ([wrap isKindOfClass:NSClassFromString(@"CMessageWrap")]) {
+            [WeChatAIHandler handleIncomingMessage:wrap];
+        }
+    } @catch (NSException *exception) {
+        NSLog(kAITweakLogPrefix "MainThreadNotifyToExt 处理异常: %@", exception);
+    }
 }
 
 static void swz_SendTextMessage(id self, SEL _cmd, NSString *content, NSString *usrName) {
@@ -404,6 +461,16 @@ static int installHooks(void) {
         NSLog(kAITweakLogPrefix "没有找到 AsyncOnAddMsg:MsgWrap:，当前微信版本可能改了接口");
     }
 
+    // 新版微信的收消息路径（8.x 起消息从这里通知出来）
+    Method extMethod = class_getInstanceMethod(cls, @selector(MainThreadNotifyToExt:));
+    if (extMethod) {
+        orig_MainThreadNotifyToExt = (void *)method_getImplementation(extMethod);
+        method_setImplementation(extMethod, (IMP)swz_MainThreadNotifyToExt);
+        NSLog(kAITweakLogPrefix "hook 安装成功: MainThreadNotifyToExt:");
+    } else {
+        NSLog(kAITweakLogPrefix "没有找到 MainThreadNotifyToExt:，只走 AsyncOnAddMsg 收消息");
+    }
+
     Method sendMethod = class_getInstanceMethod(cls, @selector(SendTextMessage:toUsrName:));
     if (sendMethod) {
         orig_SendTextMessage = (void *)method_getImplementation(sendMethod);
@@ -430,6 +497,9 @@ static void retryInstall(int remaining) {
 __attribute__((constructor))
 static void WeChatAIInit(void) {
     NSLog(kAITweakLogPrefix "插件已加载，等待微信初始化…");
+    g_dedupLock = [[NSObject alloc] init];
+    g_seenKeys = [NSMutableSet set];
+    g_seenOrder = [NSMutableArray array];
 
     [[NSNotificationCenter defaultCenter] addObserverForName:@"UIApplicationDidFinishLaunchingNotification"
                                                       object:nil
