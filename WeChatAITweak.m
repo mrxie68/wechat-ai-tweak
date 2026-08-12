@@ -170,6 +170,46 @@ static BOOL isChatAllowed(NSString *chatId) {
 
 @end
 
+// 广谱探测：列出哪些类上有哪些疑似“读历史消息”的接口（把结果复制出来发作者适配）
+static NSString *probeHistoryAPIs(void) {
+    NSMutableArray *lines = [NSMutableArray array];
+    NSArray *classNames = @[@"CMessageMgr", @"WCMessageService", @"ChatDataService",
+                            @"MessageDataService", @"ChatDB", @"MMDBHelper"];
+    NSArray *selectors = @[
+        @"GetMsg:FromNode:ToNode:",
+        @"GetMsgList:FromNode:ToNode:",
+        @"GetFirstMsg:",
+        @"GetNextMsg:fromMsg:",
+        @"GetLocalMsgData:",
+        @"GetMsgListByTime:",
+        @"QueryMsgList:",
+        @"getMsgList:",
+        @"getMessagesWithSession:",
+        @"GetMessageList:",
+        @"getMessageWithLocalID:",
+        @"fetchMessages:",
+        @"GetMsgList:",
+        @"GetChatMessages:"
+    ];
+    for (NSString *clsName in classNames) {
+        Class cls = NSClassFromString(clsName);
+        if (!cls) {
+            [lines addObject:[NSString stringWithFormat:@"%@：类不存在", clsName]];
+            continue;
+        }
+        NSMutableArray *hits = [NSMutableArray array];
+        for (NSString *selName in selectors) {
+            SEL sel = NSSelectorFromString(selName);
+            if ([cls instancesRespondToSelector:sel] || [cls respondsToSelector:sel]) {
+                [hits addObject:selName];
+            }
+        }
+        [lines addObject:[NSString stringWithFormat:@"%@：%@",
+                          clsName, hits.count ? [hits componentsJoinedByString:@" | "] : @"无"]];
+    }
+    return [lines componentsJoinedByString:@"\n"];
+}
+
 // 尝试用微信自己的消息接口拉取某个会话最近 N 条文字消息（运行时探测，找不到就返回空）
 static NSArray<NSString *> *fetchRecentTexts(NSString *chatId, NSInteger limit, NSString **diag) {
     NSMutableArray *texts = [NSMutableArray array];
@@ -846,10 +886,22 @@ static NSMutableArray *g_recentReplyOrder = nil;
         NSArray *texts = fetchRecentTexts(chatId, 100, &diag);
         dispatch_async(dispatch_get_main_queue(), ^{
             if (texts.count < 5) {
+                // 汇总完整诊断：条数 + A/B 接口诊断 + 全类探测，直接复制到剪贴板，
+                // 用户长按粘贴就能把日志发给作者排查。
+                NSString *probe = probeHistoryAPIs();
+                NSString *fullLog = [NSString stringWithFormat:
+                    @"🤖 微信 AI v%@ 学习失败诊断\n"
+                    @"会话：%@\n"
+                    @"找到文字消息：%lu 条（至少需要 5 条）\n\n"
+                    @"接口诊断：%@\n\n"
+                    @"历史接口探测：\n%@",
+                    kAITweakVersion, chatId, (unsigned long)texts.count,
+                    diag.length ? diag : @"未知", probe];
+                [[UIPasteboard generalPasteboard] setString:fullLog];
                 [self presentAlertWithTitle:@"记录太少"
                                     message:[NSString stringWithFormat:
-                                        @"最近 100 条文字消息里只找到 %lu 条可用的（至少需要 5 条才能学习）。\n\n接口诊断：%@\n\n可以稍后再试，或直接在设置页粘贴聊天记录。",
-                                        (unsigned long)texts.count, diag.length ? diag : @"未知"]];
+                                        @"最近 100 条文字消息里只找到 %lu 条可用的（至少需要 5 条才能学习）。\n\n完整诊断日志已复制到剪贴板，直接粘贴发作者即可。",
+                                        (unsigned long)texts.count]];
                 return;
             }
 
