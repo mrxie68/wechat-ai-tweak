@@ -323,6 +323,7 @@ static void *kAISwitchChatKey = &kAISwitchChatKey;  // 开关 -> chatId
         NSArray *history = [[AIContext shared] messagesForChat:chatId];
         NSUInteger epoch = [[AIContext shared] epoch];
 
+        NSUInteger replyEpoch = epoch;
         [[AIAPIClient shared] sendMessages:history
                               systemPrompt:kAISystemPrompt
                                 completion:^(NSString *reply, NSError *error) {
@@ -330,8 +331,12 @@ static void *kAISwitchChatKey = &kAISwitchChatKey;  // 开关 -> chatId
                 [g_inFlightChats removeObject:chatId];
             }
             // 清空后还在路上的回复直接丢弃，避免旧内容回流
-            if ([[AIContext shared] epoch] != epoch) {
+            if ([[AIContext shared] epoch] != replyEpoch) {
                 NSLog(kAITweakLogPrefix "上下文已清空，丢弃本次回复");
+                return;
+            }
+            if (![self shouldReplyInChat:chatId]) {
+                NSLog(kAITweakLogPrefix "开关已关闭，丢弃本次回复");
                 return;
             }
             if (error) {
@@ -389,6 +394,7 @@ static void *kAISwitchChatKey = &kAISwitchChatKey;  // 开关 -> chatId
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{
         NSArray *history = [[AIContext shared] messagesForChat:chatId];
+        NSUInteger replyEpoch = epoch;
         [[AIAPIClient shared] sendMessages:history
                               systemPrompt:[AISettings autoSystemPrompt]
                                 completion:^(NSString *reply, NSError *error) {
@@ -396,8 +402,12 @@ static void *kAISwitchChatKey = &kAISwitchChatKey;  // 开关 -> chatId
                 [g_inFlightChats removeObject:chatId];
             }
             // 清空后还在路上的回复直接丢弃
-            if ([[AIContext shared] epoch] != epoch) {
+            if ([[AIContext shared] epoch] != replyEpoch) {
                 NSLog(kAITweakLogPrefix "上下文已清空，丢弃本次自动回复");
+                return;
+            }
+            if (![self shouldReplyInChat:chatId]) {
+                NSLog(kAITweakLogPrefix "开关已关闭，丢弃本次自动回复");
                 return;
             }
             if (error) {
@@ -429,9 +439,20 @@ static void *kAISwitchChatKey = &kAISwitchChatKey;  // 开关 -> chatId
         }
     }
     if (pending) {
-        NSLog(kAITweakLogPrefix "回复期间收到新问题，补回一条 (%@)", chatId);
-        [self startAutoReplyForChat:chatId];
+        if ([self shouldReplyInChat:chatId]) {
+            NSLog(kAITweakLogPrefix "回复期间收到新问题，补回一条 (%@)", chatId);
+            [self startAutoReplyForChat:chatId];
+        } else {
+            NSLog(kAITweakLogPrefix "开关已关闭，跳过补回 (%@)", chatId);
+        }
     }
+}
+
+// 硬开关判断：全局 + 会话级都开着才允许回复
++ (BOOL)shouldReplyInChat:(NSString *)chatId {
+    if (![AISettings enabled]) return NO;
+    BOOL isGroup = [chatId containsString:@"@chatroom"];
+    return [AISettings chatEnabled:chatId defaultEnabled:!isGroup];
 }
 
 // 收消息链路里的命令兜底：自己发的 @AI 命令也识别；返回 YES 表示是命令
@@ -671,6 +692,32 @@ static void swz_SendTextMessage(id self, SEL _cmd, NSString *content, NSString *
 
     if (orig_SendTextMessage) {
         orig_SendTextMessage(self, _cmd, content, usrName);
+    }
+}
+
+// ---- 界面诊断（临时）：定位没出开关行的单聊页面 ----
+static void (*orig_pushViewController)(id, SEL, UIViewController *, BOOL);
+static void (*orig_presentViewController)(id, SEL, UIViewController *, BOOL, void (^)(void));
+
+static void swz_pushViewController(id self, SEL _cmd, UIViewController *viewController, BOOL animated) {
+    if (orig_pushViewController) {
+        orig_pushViewController(self, _cmd, viewController, animated);
+    }
+    @try {
+        [AIDiagnostics inspectViewController:viewController];
+    } @catch (NSException *exception) {
+        NSLog(kAITweakLogPrefix "界面诊断异常: %@", exception);
+    }
+}
+
+static void swz_presentViewController(id self, SEL _cmd, UIViewController *viewController, BOOL animated, void (^completion)(void)) {
+    if (orig_presentViewController) {
+        orig_presentViewController(self, _cmd, viewController, animated, completion);
+    }
+    @try {
+        [AIDiagnostics inspectViewController:viewController];
+    } @catch (NSException *exception) {
+        NSLog(kAITweakLogPrefix "界面诊断异常: %@", exception);
     }
 }
 
@@ -928,6 +975,20 @@ static int installHooks(void) {
         NSLog(kAITweakLogPrefix "没有找到 SendTextMessage:toUsrName:，本机发送记录将不可用");
     }
 
+    // 界面诊断（临时）
+    Method pushMethod = class_getInstanceMethod([UINavigationController class],
+                                                @selector(pushViewController:animated:));
+    if (pushMethod) {
+        orig_pushViewController = (void *)method_getImplementation(pushMethod);
+        method_setImplementation(pushMethod, (IMP)swz_pushViewController);
+    }
+    Method presentMethod = class_getInstanceMethod([UIViewController class],
+                                                   @selector(presentViewController:animated:completion:));
+    if (presentMethod) {
+        orig_presentViewController = (void *)method_getImplementation(presentMethod);
+        method_setImplementation(presentMethod, (IMP)swz_presentViewController);
+    }
+
     // 聊天信息页插入“AI 助手”开关行
     installChatInfoRowHooks();
     return 1;
@@ -1000,6 +1061,7 @@ static void WeChatAIInit(void) {
     NSString *className = NSStringFromClass([viewController class]);
     NSString *title = viewController.title ?: viewController.navigationItem.title ?: @"";
     if (![self looksLikeChatInfoPage:className title:title]) return;
+    if ([className isEqualToString:@"ChatRoomInfoViewController"]) return; // 群聊已生效，不再诊断
 
     // 每个类只提示一次，避免每次打开都弹
     NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
@@ -1019,6 +1081,9 @@ static void WeChatAIInit(void) {
         tableView = [self findTableViewInView:viewController.view];
     }
     if (tableView) {
+        // 检查我们的插行配置有没有挂到这个表格上
+        NSDictionary *config = objc_getAssociatedObject(tableView, &kAIConfigKey);
+        detail = [detail stringByAppendingFormat:@"\n插行配置：%@", config ? @"已挂载" : @"未挂载"];
         detail = [detail stringByAppendingFormat:@"\n%@", [self dumpTable:tableView]];
         detail = [detail stringByAppendingFormat:@"\ndataSource: %@ / delegate: %@",
                   NSStringFromClass([tableView.dataSource class]),
