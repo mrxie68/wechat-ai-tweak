@@ -658,6 +658,48 @@ static BOOL g_aiSending = NO;  // 插件自己发消息期间为 YES，发送 ho
     NSLog(kAITweakLogPrefix "记录手动发送(%@): %@", chatId, content);
 }
 
+// 暂时性错误才重试：网络超时/断连、429 限流、5xx 服务器抖动；
+// 401/402/403 这类 Key/余额问题重试也没用，直接提示。
++ (BOOL)shouldRetryError:(NSError *)error {
+    if (!error) return NO;
+    NSInteger code = error.code;
+    if (code == 429 || code == 500 || code == 502 || code == 503 || code == 504) return YES;
+    if (code == NSURLErrorTimedOut || code == NSURLErrorCannotConnectToHost ||
+        code == NSURLErrorNetworkConnectionLost || code == NSURLErrorNotConnectedToInternet ||
+        code == NSURLErrorCannotFindHost || code == NSURLErrorDNSLookupFailed) return YES;
+    return NO;
+}
+
+// 带自动重试的请求（最多 3 次：首次 + 2 次重试，间隔 2s/4s）
++ (void)sendWithRetry:(NSArray<NSDictionary *> *)history
+         systemPrompt:(NSString *)systemPrompt
+         styleProfile:(NSString *)styleProfile
+         userProfile:(NSString *)userProfile
+          completion:(void (^)(NSString *reply, NSError *error))completion {
+    __block void (^attemptBlock)(NSInteger) = nil;
+    attemptBlock = ^(NSInteger attempt) {
+        [[AIAPIClient shared] sendMessages:history
+                              systemPrompt:systemPrompt
+                              styleProfile:styleProfile
+                              userProfile:userProfile
+                              fewShotEnabled:YES
+                                completion:^(NSString *reply, NSError *error) {
+            if (error && [self shouldRetryError:error] && attempt < 3) {
+                double wait = attempt == 1 ? 2.0 : 4.0;
+                NSLog(kAITweakLogPrefix "请求失败，%.0f 秒后重试(%ld/3): %@",
+                      wait, (long)attempt, error);
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(wait * NSEC_PER_SEC)),
+                               dispatch_get_main_queue(), ^{
+                    attemptBlock(attempt + 1);
+                });
+                return;
+            }
+            completion(reply, error);
+        }];
+    };
+    attemptBlock(1);
+}
+
 // 账号隔离：检测到当前微信账号变化时清空全部上下文，避免把上一个账号的对话带过去
 + (void)syncContextAccount {
     NSString *usrName = wechatSelfUsrName();
@@ -807,12 +849,11 @@ static BOOL g_aiSending = NO;  // 插件自己发消息期间为 YES，发送 ho
         NSUInteger epoch = [[AIContext shared] epoch];
 
         NSUInteger replyEpoch = epoch;
-        [[AIAPIClient shared] sendMessages:history
-                              systemPrompt:kAISystemPrompt
-                              styleProfile:[AISettings styleProfileForChat:chatId]
-                              userProfile:[AISettings userProfile]
-                              fewShotEnabled:YES
-                                completion:^(NSString *reply, NSError *error) {
+        [self sendWithRetry:history
+               systemPrompt:kAISystemPrompt
+               styleProfile:[AISettings styleProfileForChat:chatId]
+               userProfile:[AISettings userProfile]
+                 completion:^(NSString *reply, NSError *error) {
             @synchronized (self) {
                 [g_inFlightChats removeObject:chatId];
             }
@@ -883,12 +924,11 @@ static BOOL g_aiSending = NO;  // 插件自己发消息期间为 YES，发送 ho
                    dispatch_get_main_queue(), ^{
         NSArray *history = [[AIContext shared] messagesForChat:chatId];
         NSUInteger replyEpoch = epoch;
-        [[AIAPIClient shared] sendMessages:history
-                              systemPrompt:[AISettings autoSystemPrompt]
-                              styleProfile:[AISettings styleProfileForChat:chatId]
-                              userProfile:[AISettings userProfile]
-                              fewShotEnabled:YES
-                                completion:^(NSString *reply, NSError *error) {
+        [self sendWithRetry:history
+               systemPrompt:[AISettings autoSystemPrompt]
+               styleProfile:[AISettings styleProfileForChat:chatId]
+               userProfile:[AISettings userProfile]
+                 completion:^(NSString *reply, NSError *error) {
             @synchronized (self) {
                 [g_inFlightChats removeObject:chatId];
             }
