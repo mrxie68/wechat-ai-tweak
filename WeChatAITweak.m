@@ -25,6 +25,7 @@
 @property (nonatomic, retain) NSString *m_nsContent;
 @property (nonatomic, retain) NSString *m_nsFromUsr;
 @property (nonatomic, retain) NSString *m_nsToUsr;
+@property (nonatomic, assign) long long m_nsMsgSvrID;
 @property (nonatomic, assign) unsigned int m_uiMessageType;
 @property (nonatomic, assign) unsigned int m_uiCreateTime;
 @property (nonatomic, assign) unsigned int m_uiStatus;
@@ -91,8 +92,14 @@ static NSString *wechatSelfUsrName(void) {
     id center = [(id)centerCls defaultCenter];
     if (!center) return nil;
     id contactMgr = [center getService:NSClassFromString(@"CContactMgr")];
-    CContact *selfContact = [contactMgr getSelfContact];
-    NSString *usrName = [selfContact m_nsUsrName];
+    NSString *usrName = nil;
+    // 防御：私有类接口以 respondsToSelector 兜底，避免版本差异闪退
+    if ([contactMgr respondsToSelector:@selector(getSelfContact)]) {
+        CContact *selfContact = [contactMgr getSelfContact];
+        if ([selfContact respondsToSelector:@selector(m_nsUsrName)]) {
+            usrName = [selfContact m_nsUsrName];
+        }
+    }
     if (usrName.length == 0) {
         // 兜底：用 SettingUtil 拿当前微信号
         Class settingUtil = NSClassFromString(@"SettingUtil");
@@ -127,6 +134,19 @@ static NSMutableSet *g_seenKeys = nil;
 static NSMutableArray *g_seenOrder = nil;
 
 static NSString *messageKey(CMessageWrap *wrap) {
+    // 优先用服务器消息 ID 去重：两条 hook 收到的是同一条消息，ID 相同；
+    // 避免“同一秒发两条一样的话”被误判成重复而漏回
+    if ([wrap respondsToSelector:@selector(m_nsMsgSvrID)]) {
+        @try {
+            long long svrId = [wrap m_nsMsgSvrID];
+            if (svrId != 0) {
+                NSString *from = [wrap m_nsFromUsr] ?: @"";
+                return [NSString stringWithFormat:@"%@|%lld", from, svrId];
+            }
+        } @catch (NSException *exception) {
+            // 忽略，走下面的兜底 key
+        }
+    }
     NSString *from = [wrap m_nsFromUsr] ?: @"";
     NSString *content = [wrap m_nsContent] ?: @"";
     unsigned int createTime = 0;
@@ -192,10 +212,40 @@ static BOOL g_wcpluginsControllerRegistered = NO;
 
 static NSMutableSet *g_inFlightChats = nil;
 static NSMutableSet *g_pendingChats = nil;
-static BOOL g_sendingReply = NO;
 static NSString *g_contextAccount = nil;
 static void *kAIConfigKey = &kAIConfigKey;          // tableView -> 页面配置
 static void *kAISwitchChatKey = &kAISwitchChatKey;  // 开关 -> chatId
+
+// 最近发出的 AI 回复（用于回显去重：发出时已记过上下文，回显不再记第二遍）
+static NSObject *g_replyLock = nil;
+static NSMutableSet *g_recentReplies = nil;
+static NSMutableArray *g_recentReplyOrder = nil;
+
++ (void)noteReplySent:(NSString *)text chatId:(NSString *)chatId {
+    if (text.length == 0 || chatId.length == 0) return;
+    NSString *key = [NSString stringWithFormat:@"%@|%@", chatId, text];
+    @synchronized (g_replyLock) {
+        if (!g_recentReplies) {
+            g_recentReplies = [NSMutableSet set];
+            g_recentReplyOrder = [NSMutableArray array];
+        }
+        [g_recentReplies addObject:key];
+        [g_recentReplyOrder addObject:key];
+        if (g_recentReplyOrder.count > 40) {
+            NSString *oldest = [g_recentReplyOrder firstObject];
+            [g_recentReplyOrder removeObjectAtIndex:0];
+            [g_recentReplies removeObject:oldest];
+        }
+    }
+}
+
++ (BOOL)isRecentReply:(NSString *)text chatId:(NSString *)chatId {
+    if (text.length == 0 || chatId.length == 0) return NO;
+    NSString *key = [NSString stringWithFormat:@"%@|%@", chatId, text];
+    @synchronized (g_replyLock) {
+        return [g_recentReplies containsObject:key];
+    }
+}
 
 // 账号隔离：检测到当前微信账号变化时清空全部上下文，避免把上一个账号的对话带过去
 + (void)syncContextAccount {
@@ -250,6 +300,8 @@ static void *kAISwitchChatKey = &kAISwitchChatKey;  // 开关 -> chatId
 
         // 自己发的消息：先识别 @AI 命令；不是命令则记进上下文（8.0.5x 没有发送 hook，靠回显记录）
         if (isSelf) {
+            // 插件自己刚发出的回复回显：发出时已记过上下文，这里跳过，避免记两遍
+            if ([self isRecentReply:content chatId:chatId]) return;
             if ([AISettings enabled] && isAutoMode()) {
                 [[AIContext shared] appendAssistant:content chatId:chatId];
             }
@@ -437,9 +489,10 @@ static void *kAISwitchChatKey = &kAISwitchChatKey;  // 开关 -> chatId
             // 模拟打字：按字数算时间（0.15 秒/字，0.8~8 秒）+ 0~1.5 秒随机波动
             double typing = MIN(MAX((double)reply.length * 0.15, 0.8), 8.0)
                           + (double)(arc4random_uniform(15) / 10.0);
+            // 先记入上下文（发出后回显会被去重，不会记两遍）
+            [[AIContext shared] appendAssistant:reply chatId:chatId];
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(typing * NSEC_PER_SEC)),
                            dispatch_get_main_queue(), ^{
-                // 回复发出后，收消息回显会把它记进上下文
                 [self sendReply:reply chatId:chatId];
                 // 回复期间收到的问题：补回一条
                 [self checkPendingForChat:chatId];
@@ -503,11 +556,6 @@ static void *kAISwitchChatKey = &kAISwitchChatKey;  // 开关 -> chatId
         keyMasked, whiteDesc];
 }
 
-+ (NSString *)statusStringForChat:(NSString *)chatId {
-    BOOL chatOn = [AISettings chatEnabled:chatId];
-    return [[self statusString] stringByAppendingFormat:@"\n本会话 AI：%@", chatOn ? @"开" : @"关"];
-}
-
 + (void)presentAlertWithTitle:(NSString *)title message:(NSString *)message {
     dispatch_async(dispatch_get_main_queue(), ^{
         UIViewController *top = tweakTopViewController();
@@ -532,13 +580,13 @@ static void *kAISwitchChatKey = &kAISwitchChatKey;  // 开关 -> chatId
             NSLog(kAITweakLogPrefix "获取 CMessageMgr 失败");
             return;
         }
+        // 标记最近回复，回显去重用（必须在调用发送接口前标记，防止同步回显先到）
+        [self noteReplySent:text chatId:chatId];
         // 尝试多种发送接口：SendTextMessage → AddMsg:MsgWrap:（8.0.55 主路径）→ SendMessage:isSendByWeChat:
         BOOL sent = NO;
 
         if ([mgr respondsToSelector:@selector(SendTextMessage:toUsrName:)]) {
-            g_sendingReply = YES;
             [mgr SendTextMessage:text toUsrName:chatId];
-            g_sendingReply = NO;
             sent = YES;
         } else if ([mgr respondsToSelector:@selector(AddMsg:MsgWrap:)]) {
             // 8.0.5x 的发送接口：构造 CMessageWrap 后 AddMsg
@@ -1058,6 +1106,7 @@ static void WeChatAIInit(void) {
     g_dedupLock = [[NSObject alloc] init];
     g_seenKeys = [NSMutableSet set];
     g_seenOrder = [NSMutableArray array];
+    g_replyLock = [[NSObject alloc] init];
 
     [[NSNotificationCenter defaultCenter] addObserverForName:@"UIApplicationDidFinishLaunchingNotification"
                                                       object:nil
@@ -1072,131 +1121,8 @@ static void WeChatAIInit(void) {
     registerWithWCPlugins(10);
 }
 
-// ============================================================
-//  界面诊断（临时）：打开聊天信息页时弹窗显示类名和插行条件
-//  下一版会用真正的“AI 助手”菜单行替换掉它
-// ============================================================
+// 辅助：递归查找 UITableView（仅聊天信息页插行用，无其他副作用）
 @implementation AIDiagnostics
-
-+ (void)inspectViewController:(UIViewController *)viewController {
-    if (!viewController) return;
-
-    // 立即查一次；标题往往是页面加载后才设置的，0.6 秒后再查一次
-    [self inspectOnce:viewController scanTable:NO];
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.6 * NSEC_PER_SEC)),
-                   dispatch_get_main_queue(), ^{
-        [self inspectOnce:viewController scanTable:YES];
-    });
-}
-
-+ (BOOL)looksLikeChatInfoPage:(NSString *)className title:(NSString *)title {
-    if ([className containsString:@"ChatInfo"]
-        || [className containsString:@"ChatDetail"]
-        || [className containsString:@"ChatSetting"]
-        || [className containsString:@"ChatRoomInfo"]
-        || [className containsString:@"SessionDetail"]) {
-        return YES;
-    }
-    if ([title containsString:@"聊天信息"]
-        || [title containsString:@"聊天详情"]
-        || [title containsString:@"群聊信息"]) {
-        return YES;
-    }
-    return NO;
-}
-
-+ (void)inspectOnce:(UIViewController *)viewController scanTable:(BOOL)scanTable {
-    NSString *className = NSStringFromClass([viewController class]);
-    NSString *title = viewController.title ?: viewController.navigationItem.title ?: @"";
-    if ([className isEqualToString:@"ChatRoomInfoViewController"]) return; // 群聊已生效，不再诊断
-
-    BOOL matched = [self looksLikeChatInfoPage:className title:title];
-    if (!matched && scanTable) {
-        // 不猜类名：直接扫表格里有没有“查找聊天内容/备注”
-        UITableView *scanTable = [self findTableViewForVC:viewController];
-        if (scanTable && [self tableHasChatInfoAnchor:scanTable]) {
-            matched = YES;
-        }
-    }
-    if (!matched) return;
-
-    // 每个类只提示一次，避免每次打开都弹
-    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
-    NSString *flagKey = [NSString stringWithFormat:@"WeChatAIDiagShown_%@_%@", kAITweakVersion, className];
-    if ([defaults boolForKey:flagKey]) return;
-    [defaults setBool:YES forKey:flagKey];
-
-    NSString *detail = [NSString stringWithFormat:@"类名：%@\n标题：%@", className, title.length ? title : @"(空)"];
-
-    // 导出表格结构：哪个 section 有“查找聊天内容/备注”，就能精确定位插行位置
-    UITableView *tableView = nil;
-    Ivar tableIvar = class_getInstanceVariable([viewController class], "m_tableView");
-    if (tableIvar) {
-        tableView = object_getIvar(viewController, tableIvar);
-    }
-    if (!tableView) {
-        tableView = [self findTableViewInView:viewController.view];
-    }
-    if (tableView) {
-        // 检查我们的插行配置有没有挂到这个表格上
-        NSDictionary *config = objc_getAssociatedObject(tableView, &kAIConfigKey);
-        detail = [detail stringByAppendingFormat:@"\n插行配置：%@", config ? @"已挂载" : @"未挂载"];
-        detail = [detail stringByAppendingFormat:@"\n%@", [self dumpTable:tableView]];
-        detail = [detail stringByAppendingFormat:@"\ndataSource: %@ / delegate: %@",
-                  NSStringFromClass([tableView.dataSource class]),
-                  NSStringFromClass([tableView.delegate class])];
-    } else {
-        detail = [detail stringByAppendingString:@"\n（未找到表格）"];
-    }
-
-    if (detail.length > 2400) {
-        detail = [detail substringToIndex:2400];
-        detail = [detail stringByAppendingString:@"\n…（过长截断）"];
-    }
-
-    // 自动复制到剪贴板，不用截图/OCR，直接粘贴发给我
-    [[UIPasteboard generalPasteboard] setString:detail];
-    detail = [detail stringByAppendingString:@"\n\n（内容已复制到剪贴板）"];
-
-    dispatch_async(dispatch_get_main_queue(), ^{
-        UIViewController *top = tweakTopViewController();
-        if (!top) return;
-        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"AI 表格结构"
-                                                                      message:detail
-                                                               preferredStyle:UIAlertControllerStyleAlert];
-        [alert addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
-        [top presentViewController:alert animated:YES completion:nil];
-    });
-}
-
-+ (UITableView *)findTableViewForVC:(UIViewController *)viewController {
-    UITableView *tableView = nil;
-    Ivar tableIvar = class_getInstanceVariable([viewController class], "m_tableView");
-    if (tableIvar) tableView = object_getIvar(viewController, tableIvar);
-    if (!tableView) tableView = [self findTableViewInView:viewController.view];
-    return tableView;
-}
-
-// 有界扫描：只在靠前的 section/行里找“查找聊天内容/备注”，避免大表格卡顿
-+ (BOOL)tableHasChatInfoAnchor:(UITableView *)tableView {
-    @try {
-        NSInteger sections = MIN([tableView numberOfSections], 4);
-        for (NSInteger section = 0; section < sections; section++) {
-            NSInteger rows = MIN([tableView numberOfRowsInSection:section], 12);
-            for (NSInteger row = 0; row < rows; row++) {
-                UITableViewCell *cell = [tableView.dataSource tableView:tableView
-                                                   cellForRowAtIndexPath:[NSIndexPath indexPathForRow:row inSection:section]];
-                NSString *labels = [self labelTextsInView:cell];
-                if ([labels containsString:@"查找聊天内容"] || [labels containsString:@"备注"]) {
-                    return YES;
-                }
-            }
-        }
-    } @catch (NSException *exception) {
-        // 忽略，继续
-    }
-    return NO;
-}
 
 + (UITableView *)findTableViewInView:(UIView *)view {
     if ([view isKindOfClass:[UITableView class]]) return (UITableView *)view;
@@ -1205,78 +1131,6 @@ static void WeChatAIInit(void) {
         if (found) return found;
     }
     return nil;
-}
-
-+ (NSString *)dumpTable:(UITableView *)tableView {
-    NSMutableString *result = [NSMutableString string];
-    NSInteger sections = 0;
-    @try {
-        sections = [tableView numberOfSections];
-    } @catch (NSException *e) {
-        return @"（读取表格失败）";
-    }
-    [result appendFormat:@"sections=%ld\n", (long)sections];
-
-    for (NSInteger section = 0; section < sections; section++) {
-        NSInteger rows = 0;
-        @try {
-            rows = [tableView numberOfRowsInSection:section];
-        } @catch (NSException *e) {
-            continue;
-        }
-        [result appendFormat:@"[S%ld] rows=%ld\n", (long)section, (long)rows];
-
-        NSInteger showRows = MIN(rows, 10);
-        for (NSInteger row = 0; row < showRows; row++) {
-            @try {
-                NSIndexPath *indexPath = [NSIndexPath indexPathForRow:row inSection:section];
-                UITableViewCell *cell = [tableView.dataSource tableView:tableView cellForRowAtIndexPath:indexPath];
-                [result appendFormat:@"  r%ld: %@\n", (long)row, [self labelTextsInView:cell]];
-            } @catch (NSException *e) {
-                [result appendFormat:@"  r%ld: （读取失败）\n", (long)row];
-            }
-        }
-        if (rows > showRows) {
-            [result appendFormat:@"  ...（共 %ld 行）\n", (long)rows];
-        }
-    }
-
-    if (result.length > 900) {
-        [result deleteCharactersInRange:NSMakeRange(900, result.length - 900)];
-        [result appendString:@"\n…（内容过长已截断）"];
-    }
-    return result;
-}
-
-+ (NSString *)labelTextsInView:(UIView *)view {
-    NSMutableArray *texts = [NSMutableArray array];
-    [self collectLabelsInView:view into:texts];
-    if (texts.count == 0) return NSStringFromClass([view class]);
-    return [texts componentsJoinedByString:@" | "];
-}
-
-+ (NSString *)methodListOfClass:(Class)cls limit:(NSInteger)limit {
-    if (!cls) return @"-";
-    NSMutableArray *names = [NSMutableArray array];
-    unsigned int count = 0;
-    Method *methods = class_copyMethodList(cls, &count);
-    for (unsigned int i = 0; i < count && names.count < limit; i++) {
-        [names addObject:NSStringFromSelector(method_getName(methods[i]))];
-    }
-    free(methods);
-    return [names componentsJoinedByString:@"\n"];
-}
-
-+ (void)collectLabelsInView:(UIView *)view into:(NSMutableArray *)texts {
-    if ([view isKindOfClass:[UILabel class]]) {
-        NSString *text = ((UILabel *)view).text;
-        if (text.length > 0 && texts.count < 4) {
-            [texts addObject:text];
-        }
-    }
-    for (UIView *subview in view.subviews) {
-        [self collectLabelsInView:subview into:texts];
-    }
 }
 
 @end
