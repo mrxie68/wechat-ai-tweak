@@ -173,159 +173,6 @@ static BOOL isChatAllowed(NSString *chatId) {
 
 @end
 
-// 广谱探测：列出哪些类上有哪些疑似“读历史消息”的接口（把结果复制出来发作者适配）
-static NSString *probeHistoryAPIs(void) {
-    NSMutableArray *lines = [NSMutableArray array];
-    NSArray *classNames = @[@"CMessageMgr", @"WCMessageService", @"ChatDataService",
-                            @"MessageDataService", @"ChatDB", @"MMDBHelper"];
-    NSArray *selectors = @[
-        @"GetMsg:FromNode:ToNode:",
-        @"GetMsgList:FromNode:ToNode:",
-        @"GetFirstMsg:",
-        @"GetNextMsg:fromMsg:",
-        @"GetLocalMsgData:",
-        @"GetMsgListByTime:",
-        @"QueryMsgList:",
-        @"getMsgList:",
-        @"getMessagesWithSession:",
-        @"GetMessageList:",
-        @"getMessageWithLocalID:",
-        @"fetchMessages:",
-        @"GetMsgList:",
-        @"GetChatMessages:"
-    ];
-    for (NSString *clsName in classNames) {
-        Class cls = NSClassFromString(clsName);
-        if (!cls) {
-            [lines addObject:[NSString stringWithFormat:@"%@：类不存在", clsName]];
-            continue;
-        }
-        NSMutableArray *hits = [NSMutableArray array];
-        for (NSString *selName in selectors) {
-            SEL sel = NSSelectorFromString(selName);
-            if ([cls instancesRespondToSelector:sel] || [cls respondsToSelector:sel]) {
-                [hits addObject:selName];
-            }
-        }
-        [lines addObject:[NSString stringWithFormat:@"%@：%@",
-                          clsName, hits.count ? [hits componentsJoinedByString:@" | "] : @"无"]];
-    }
-    return [lines componentsJoinedByString:@"\n"];
-}
-
-// ==================== 深度体检（类枚举 + 数据库结构） ====================
-
-static NSString *aiCapString(NSString *s, NSUInteger max) {
-    if (s.length <= max) return s;
-    NSRange r = [s rangeOfComposedCharacterSequenceAtIndex:max - 1];
-    return [s substringToIndex:NSMaxRange(r)];
-}
-
-static BOOL aiClassNameMatchesProbe(NSString *name) {
-    NSArray *kws = @[@"Msg", @"Message", @"Chat", @"Session", @"History",
-                     @"Record", @"WCDB", @"MMDB", @"Service"];
-    for (NSString *kw in kws) {
-        if ([name rangeOfString:kw].location != NSNotFound) return YES;
-    }
-    return NO;
-}
-
-static BOOL aiMethodNameMatchesProbe(NSString *sel) {
-    NSArray *kws = @[@"Msg", @"Message", @"Query", @"History", @"Recent",
-                     @"List", @"Node", @"Local", @"CreateTime", @"Fetch",
-                     @"Load", @"First", @"Next"];
-    for (NSString *kw in kws) {
-        if ([sel rangeOfString:kw].location != NSNotFound) return YES;
-    }
-    return NO;
-}
-
-static void aiAppendClassMethods(Class cls, NSMutableArray *hits, NSUInteger cap) {
-    unsigned int count = 0;
-    Method *methods = class_copyMethodList(cls, &count);
-    for (unsigned int i = 0; i < count && hits.count < cap; i++) {
-        NSString *sel = NSStringFromSelector(method_getName(methods[i]));
-        if (sel.length > 0 && aiMethodNameMatchesProbe(sel)) [hits addObject:sel];
-    }
-    free(methods);
-    methods = class_copyMethodList(object_getClass(cls), &count);
-    for (unsigned int i = 0; i < count && hits.count < cap; i++) {
-        NSString *sel = NSStringFromSelector(method_getName(methods[i]));
-        if (sel.length > 0 && aiMethodNameMatchesProbe(sel)) [hits addObject:[@"+" stringByAppendingString:sel]];
-    }
-    free(methods);
-}
-
-// 微信 iOS 的类名常见前缀；排除 Apple 系统类（AA-AZ 保留前缀、NS/UI/CA 等），
-// 避免深度体检被 Apple 的 Message 相关类刷屏
-static BOOL aiIsWeChatClass(NSString *name) {
-    if (name.length < 2) return NO;
-    if ([name hasPrefix:@"MM"] || [name hasPrefix:@"WC"] || [name hasPrefix:@"WX"] ||
-        [name hasPrefix:@"WeChat"] || [name hasPrefix:@"C"] || [name hasPrefix:@"DB"] ||
-        [name hasPrefix:@"Msg"] || [name hasPrefix:@"Message"] || [name hasPrefix:@"Chat"] ||
-        [name hasPrefix:@"Session"] || [name hasPrefix:@"WCDB"] || [name hasPrefix:@"Brand"] ||
-        [name hasPrefix:@"MicroMessenger"]) return YES;
-    unichar c0 = [name characterAtIndex:0];
-    unichar c1 = [name characterAtIndex:1];
-    if (c0 == 'A' && c1 >= 'A' && c1 <= 'Z') return NO;
-    NSArray *sys = @[@"NS", @"UI", @"CA", @"CF", @"CG", @"AV", @"CN", @"CL",
-                     @"PH", @"SK", @"MT", @"HK", @"OS", @"IO", @"CB"];
-    for (NSString *p in sys) {
-        if ([name hasPrefix:p]) return NO;
-    }
-    return NO;
-}
-
-static NSString *probeLoadedMessageClasses(void) {
-    @try {
-        NSMutableArray *matches = [NSMutableArray array];
-        int classCount = objc_getClassList(NULL, 0);
-        Class *classes = NULL;
-        if (classCount > 0) {
-            classes = (Class *)malloc(sizeof(Class) * (unsigned long)classCount);
-            objc_getClassList(classes, classCount);
-        }
-        for (int i = 0; i < classCount; i++) {
-            Class cls = classes[i];
-            NSString *name = NSStringFromClass(cls);
-            if (name.length == 0 || !aiClassNameMatchesProbe(name) || !aiIsWeChatClass(name)) continue;
-            NSMutableArray *hits = [NSMutableArray array];
-            aiAppendClassMethods(cls, hits, 12);
-            if (hits.count == 0) continue;
-            [hits sortUsingSelector:@selector(compare:)];
-            [matches addObject:@{@"name": name, @"hits": hits}];
-        }
-        free(classes);
-
-        // 消息/服务类优先，再按名字排序，最多 30 个类
-        [matches sortUsingComparator:^NSComparisonResult(id a, id b) {
-            NSString *an = a[@"name"], *bn = b[@"name"];
-            BOOL aMsg = [an rangeOfString:@"Msg" options:NSCaseInsensitiveSearch].location != NSNotFound ||
-                        [an rangeOfString:@"Message" options:NSCaseInsensitiveSearch].location != NSNotFound;
-            BOOL bMsg = [bn rangeOfString:@"Msg" options:NSCaseInsensitiveSearch].location != NSNotFound ||
-                        [bn rangeOfString:@"Message" options:NSCaseInsensitiveSearch].location != NSNotFound;
-            if (aMsg != bMsg) return aMsg ? NSOrderedAscending : NSOrderedDescending;
-            return [an compare:bn];
-        }];
-        if (matches.count > 30) {
-            matches = [[matches subarrayWithRange:NSMakeRange(0, 30)] mutableCopy];
-        }
-
-        NSMutableArray *lines = [NSMutableArray array];
-        if (matches.count == 0) return @"（没有已加载的消息相关类）";
-        for (NSDictionary *m in matches) {
-            NSString *name = m[@"name"];
-            if (name.length > 60) name = [name substringToIndex:60];
-            NSArray *hits = m[@"hits"];
-            [lines addObject:[NSString stringWithFormat:@"%@: %@",
-                              name, [hits componentsJoinedByString:@" | "]]];
-        }
-        return aiCapString([lines componentsJoinedByString:@"\n"], 2600);
-    } @catch (NSException *e) {
-        return [NSString stringWithFormat:@"类枚举异常: %@", e];
-    }
-}
-
 static BOOL aiIsSQLiteFile(NSString *path) {
     FILE *f = fopen([path UTF8String], "rb");
     if (!f) return NO;
@@ -444,75 +291,6 @@ static NSString *aiMD5Hex(NSString *input) {
         [hex appendFormat:@"%02x", digest[i]];
     }
     return hex;
-}
-
-static NSString *probeDatabases(void) {
-    @try {
-        NSMutableArray *lines = [NSMutableArray array];
-        NSArray *dbs = aiFindDatabaseFiles();
-        if (dbs.count == 0) return @"（沙盒里没找到 .sqlite/.db 文件）";
-        NSString *home = NSHomeDirectory();
-        for (NSDictionary *d in dbs) {
-            if (lines.count >= 30) break;
-            NSString *rel = d[@"rel"];
-            NSString *full = d[@"path"];
-            NSNumber *size = d[@"size"];
-            NSString *sizeStr = size.longLongValue >= 1024
-                ? [NSString stringWithFormat:@"%.1fKB", size.doubleValue / 1024.0]
-                : [NSString stringWithFormat:@"%lldB", size.longLongValue];
-            NSString *shortPath = [full stringByReplacingOccurrencesOfString:home withString:@"~"];
-            if (!aiIsSQLiteFile(full)) {
-                [lines addObject:[NSString stringWithFormat:@"%@ (%@) 非SQLite", shortPath, sizeStr]];
-                continue;
-            }
-            sqlite3 *db = NULL;
-            int rc = sqlite3_open_v2([full UTF8String], &db,
-                                     SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX, NULL);
-            if (rc != SQLITE_OK) {
-                [lines addObject:[NSString stringWithFormat:@"%@ (%@) 打开失败 rc=%d", shortPath, sizeStr, rc]];
-                if (db) sqlite3_close(db);
-                continue;
-            }
-            sqlite3_busy_timeout(db, 2000);
-            NSMutableArray *sub = [NSMutableArray arrayWithObject:
-                                   [NSString stringWithFormat:@"%@ (%@)", shortPath, sizeStr]];
-            NSArray *tables = aiSQLiteTableNames(db);
-            int shown = 0;
-            for (NSString *tbl in tables) {
-                if (shown >= 6) break;
-                if (!aiIsMessageTable(tbl)) continue;
-                NSArray *cols = aiSQLiteColumns(db, tbl);
-                NSMutableArray *colStr = [NSMutableArray array];
-                for (NSString *c in cols) {
-                    [colStr addObject:c];
-                    if (colStr.count >= 12) break;
-                }
-                [sub addObject:[NSString stringWithFormat:@"  %@: [%@]",
-                                tbl, [colStr componentsJoinedByString:@", "]]];
-                shown++;
-            }
-            if (tables.count > shown) {
-                [sub addObject:[NSString stringWithFormat:@"  …共%lu张消息表",
-                                (unsigned long)tables.count]];
-            }
-            [lines addObject:[sub componentsJoinedByString:@"\n"]];
-            sqlite3_close(db);
-        }
-        return aiCapString([lines componentsJoinedByString:@"\n"], 4000);
-    } @catch (NSException *e) {
-        return [NSString stringWithFormat:@"DB 探测异常: %@", e];
-    }
-}
-
-static NSString *probeDeepDiagnostics(void) {
-    NSMutableArray *parts = [NSMutableArray array];
-    [parts addObject:[NSString stringWithFormat:@"【接口】(固定猜测)\n%@",
-                      probeHistoryAPIs()]];
-    [parts addObject:[NSString stringWithFormat:@"【已加载消息相关类+方法】\n%@",
-                      probeLoadedMessageClasses()]];
-    [parts addObject:[NSString stringWithFormat:@"【DB 文件与表结构】\n%@",
-                      probeDatabases()]];
-    return [parts componentsJoinedByString:@"\n\n"];
 }
 
 // ==================== 数据库直读（学习风格用，只查当前会话） ====================
@@ -1313,23 +1091,17 @@ static NSMutableArray *g_recentReplyOrder = nil;
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
         NSString *diag = @"";
         NSArray *texts = fetchRecentTexts(chatId, 100, &diag);
-        NSString *deepProbe = @"";
-        if (texts.count < 5) {
-            // 读不到历史才做深度体检（枚举类+方法+数据库表结构），比较重，放后台
-            deepProbe = probeDeepDiagnostics();
-        }
         dispatch_async(dispatch_get_main_queue(), ^{
             if (texts.count < 5) {
-                // 汇总完整诊断：条数 + 接口诊断 + 深度体检，直接复制到剪贴板，
+                // 汇总诊断：条数 + 接口诊断，直接复制到剪贴板，
                 // 用户长按粘贴就能把日志发给作者排查。
                 NSString *fullLog = [NSString stringWithFormat:
                     @"🤖 微信 AI v%@ 学习失败诊断\n"
                     @"会话：%@\n"
                     @"找到文字消息：%lu 条（至少需要 5 条）\n\n"
-                    @"接口诊断：%@\n\n"
-                    @"深度体检：\n%@",
+                    @"接口诊断：%@",
                     kAITweakVersion, chatId, (unsigned long)texts.count,
-                    diag.length ? diag : @"未知", deepProbe];
+                    diag.length ? diag : @"未知"];
                 [[UIPasteboard generalPasteboard] setString:fullLog];
                 [self presentAlertWithTitle:@"记录太少（日志已复制）"
                                     message:[NSString stringWithFormat:
