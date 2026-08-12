@@ -128,7 +128,7 @@ static BOOL isChatAllowed(NSString *chatId) {
     return NO;
 }
 
-// 尝试用微信自己的消息接口拉取某个会话最近几天的文字消息（运行时探测，找不到就返回空）
+// 尝试用微信自己的消息接口拉取某个会话最近 N 条文字消息（运行时探测，找不到就返回空）
 static NSArray<NSString *> *fetchRecentTexts(NSString *chatId, NSInteger limit) {
     NSMutableArray *texts = [NSMutableArray array];
     CMessageMgr *mgr = wechatMessageMgr();
@@ -140,8 +140,6 @@ static NSArray<NSString *> *fetchRecentTexts(NSString *chatId, NSInteger limit) 
         @try {
             id msg = [mgr GetFirstMsg:chatId];
             NSInteger guard = 0;
-            NSInteger now = (NSInteger)time(NULL);
-            NSInteger windowStart = now - 3 * 24 * 3600; // 最近 3 天
             while (msg && guard < 3000) {
                 guard++;
                 NSInteger type = 0;
@@ -151,13 +149,7 @@ static NSArray<NSString *> *fetchRecentTexts(NSString *chatId, NSInteger limit) 
                 if (type == 1) {
                     NSString *content = [msg m_nsContent] ?: @"";
                     if (content.length > 0 && ![content hasPrefix:@"<msg"]) {
-                        NSInteger t = 0;
-                        if ([msg respondsToSelector:@selector(m_uiCreateTime)]) {
-                            t = [msg m_uiCreateTime];
-                        }
-                        if (t >= windowStart && t <= now) {
-                            [texts addObject:content];
-                        }
+                        [texts addObject:content];
                     }
                 }
                 id next = [mgr GetNextMsg:chatId fromMsg:msg];
@@ -173,6 +165,7 @@ static NSArray<NSString *> *fetchRecentTexts(NSString *chatId, NSInteger limit) 
         NSLog(kAITweakLogPrefix "微信版本没有 GetFirstMsg/GetNextMsg 接口，历史记录需另寻路径");
     }
 
+    // 只保留最后 limit 条（按遍历顺序的“最近”）
     if (texts.count > limit) {
         [texts removeObjectsInRange:NSMakeRange(0, texts.count - limit)];
     }
@@ -738,7 +731,7 @@ static NSMutableArray *g_recentReplyOrder = nil;
         UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"学习聊天风格"
                                                                        message:profile.length > 0
             ? @"这个好友已有学习档案。可以重新学习覆盖，或清除档案。"
-            : @"将读取这个好友最近 3 天的文字聊天记录，并发送给 DeepSeek 总结你的说话风格。\n\n记录只用于本次学习，原文不会保存，只保存风格总结。确定继续？"
+            : @"将读取这个好友最近 100 条文字聊天记录，并发送给 DeepSeek 总结你的说话风格（仅对这位好友生效）。\n\n记录只用于本次学习，原文不会保存，只保存风格总结。确定继续？"
                                                                 preferredStyle:UIAlertControllerStyleAlert];
         [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
         [alert addAction:[UIAlertAction actionWithTitle:profile.length > 0 ? @"重新学习" : @"开始学习"
@@ -760,10 +753,10 @@ static NSMutableArray *g_recentReplyOrder = nil;
 }
 
 + (void)learnStyleForChat:(NSString *)chatId {
-    NSArray *texts = fetchRecentTexts(chatId, 200);
+    NSArray *texts = fetchRecentTexts(chatId, 100);
     if (texts.count < 5) {
         [self presentAlertWithTitle:@"记录太少"
-                            message:[NSString stringWithFormat:@"只找到最近 3 天的文字消息 %lu 条（至少需要 5 条才能学习）。可以稍后再试，或直接在设置页粘贴聊天记录。", (unsigned long)texts.count]];
+                            message:[NSString stringWithFormat:@"最近 100 条文字消息里只找到 %lu 条可用的（至少需要 5 条才能学习）。可以稍后再试，或直接在设置页粘贴聊天记录。", (unsigned long)texts.count]];
         return;
     }
 
