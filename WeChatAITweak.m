@@ -48,6 +48,11 @@
 + (id)getCurUsrName;
 @end
 
+// 界面诊断（临时功能）：识别聊天信息页类名
+@interface AIDiagnostics : NSObject
++ (void)inspectViewController:(UIViewController *)viewController;
+@end
+
 @interface CContact : NSObject
 @property (nonatomic, retain) NSString *m_nsUsrName;
 @end
