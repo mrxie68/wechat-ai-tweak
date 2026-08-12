@@ -836,31 +836,105 @@ static void WeChatAIInit(void) {
 
     // 每个类只提示一次，避免每次打开都弹
     NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
-    NSString *flagKey = [NSString stringWithFormat:@"WeChatAIDiagShown_%@", className];
+    NSString *flagKey = [NSString stringWithFormat:@"WeChatAIDiagShown_%@_%@", kAITweakVersion, className];
     if ([defaults boolForKey:flagKey]) return;
     [defaults setBool:YES forKey:flagKey];
 
     NSString *detail = [NSString stringWithFormat:@"类名：%@\n标题：%@", className, title.length ? title : @"(空)"];
-    if ([className isEqualToString:@"ChatRoomInfoViewController"]) {
-        Ivar ivar = class_getInstanceVariable([viewController class], "m_tableViewInfo");
-        detail = [detail stringByAppendingFormat:@"\nivar m_tableViewInfo：%@", ivar ? @"有" : @"无"];
-        if (ivar) {
-            id tableInfo = object_getIvar(viewController, ivar);
-            detail = [detail stringByAppendingFormat:@"\ngetSectionAt：%@ / getTableView：%@",
-                      [tableInfo respondsToSelector:@selector(getSectionAt:)] ? @"有" : @"无",
-                      [tableInfo respondsToSelector:@selector(getTableView)] ? @"有" : @"无"];
-        }
+
+    // 导出表格结构：哪个 section 有“查找聊天内容/备注”，就能精确定位插行位置
+    UITableView *tableView = nil;
+    Ivar tableIvar = class_getInstanceVariable([viewController class], "m_tableView");
+    if (tableIvar) {
+        tableView = object_getIvar(viewController, tableIvar);
+    }
+    if (!tableView) {
+        tableView = [self findTableViewInView:viewController.view];
+    }
+    if (tableView) {
+        detail = [detail stringByAppendingFormat:@"\n%@", [self dumpTable:tableView]];
+    } else {
+        detail = [detail stringByAppendingString:@"\n（未找到表格）"];
     }
 
     dispatch_async(dispatch_get_main_queue(), ^{
         UIViewController *top = tweakTopViewController();
         if (!top) return;
-        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"AI 界面诊断"
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"AI 表格结构"
                                                                       message:detail
                                                                preferredStyle:UIAlertControllerStyleAlert];
         [alert addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
         [top presentViewController:alert animated:YES completion:nil];
     });
+}
+
++ (UITableView *)findTableViewInView:(UIView *)view {
+    if ([view isKindOfClass:[UITableView class]]) return (UITableView *)view;
+    for (UIView *subview in view.subviews) {
+        UITableView *found = [self findTableViewInView:subview];
+        if (found) return found;
+    }
+    return nil;
+}
+
++ (NSString *)dumpTable:(UITableView *)tableView {
+    NSMutableString *result = [NSMutableString string];
+    NSInteger sections = 0;
+    @try {
+        sections = [tableView numberOfSections];
+    } @catch (NSException *e) {
+        return @"（读取表格失败）";
+    }
+    [result appendFormat:@"sections=%ld\n", (long)sections];
+
+    for (NSInteger section = 0; section < sections; section++) {
+        NSInteger rows = 0;
+        @try {
+            rows = [tableView numberOfRowsInSection:section];
+        } @catch (NSException *e) {
+            continue;
+        }
+        [result appendFormat:@"[S%ld] rows=%ld\n", (long)section, (long)rows];
+
+        NSInteger showRows = MIN(rows, 10);
+        for (NSInteger row = 0; row < showRows; row++) {
+            @try {
+                NSIndexPath *indexPath = [NSIndexPath indexPathForRow:row inSection:section];
+                UITableViewCell *cell = [tableView.dataSource tableView:tableView cellForRowAtIndexPath:indexPath];
+                [result appendFormat:@"  r%ld: %@\n", (long)row, [self labelTextsInView:cell]];
+            } @catch (NSException *e) {
+                [result appendFormat:@"  r%ld: （读取失败）\n", (long)row];
+            }
+        }
+        if (rows > showRows) {
+            [result appendFormat:@"  ...（共 %ld 行）\n", (long)rows];
+        }
+    }
+
+    if (result.length > 900) {
+        [result deleteCharactersInRange:NSMakeRange(900, result.length - 900)];
+        [result appendString:@"\n…（内容过长已截断）"];
+    }
+    return result;
+}
+
++ (NSString *)labelTextsInView:(UIView *)view {
+    NSMutableArray *texts = [NSMutableArray array];
+    [self collectLabelsInView:view into:texts];
+    if (texts.count == 0) return NSStringFromClass([view class]);
+    return [texts componentsJoinedByString:@" | "];
+}
+
++ (void)collectLabelsInView:(UIView *)view into:(NSMutableArray *)texts {
+    if ([view isKindOfClass:[UILabel class]]) {
+        NSString *text = ((UILabel *)view).text;
+        if (text.length > 0 && texts.count < 4) {
+            [texts addObject:text];
+        }
+    }
+    for (UIView *subview in view.subviews) {
+        [self collectLabelsInView:subview into:texts];
+    }
 }
 
 @end
