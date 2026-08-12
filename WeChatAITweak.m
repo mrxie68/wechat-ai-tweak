@@ -545,7 +545,7 @@ static NSMutableArray *g_recentReplyOrder = nil;
     NSString *tableDiag = g_chatTableDiag.length ? g_chatTableDiag : @"（还没打开过聊天信息页）";
 
     return [NSString stringWithFormat:
-        @"🤖 微信 AI v%@\n总开关：%@\n模式：%@\n模型：%@\n延迟：%.1f秒\nhook：收消息Async %@ / 收消息Ext %@ / 发送 %@\nAPI Key：%@\n白名单：%@\n表格诊断：%@",
+        @"🤖 微信 AI v%@\n总开关：%@\n模式：%@\n模型：%@\n延迟：%.1f秒\nhook：收消息Async %@ / 收消息Ext %@ / 发送 %@\nwcplugins：%@\nAPI Key：%@\n白名单：%@\n表格诊断：%@",
         kAITweakVersion, [AISettings enabled] ? @"开" : @"关",
         mode, [AISettings model],
         [AISettings replyDelay],
