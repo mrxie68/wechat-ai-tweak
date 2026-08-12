@@ -908,9 +908,12 @@ static BOOL g_aiSending = NO;  // 插件自己发消息期间为 YES，发送 ho
                                     message:@"请求 DeepSeek 失败（网络异常或余额不足），本次没有发送任何回复。"];
                 return;
             }
-            // 模拟打字：按字数算时间（0.15 秒/字，0.8~8 秒）+ 0~1.5 秒随机波动
-            double typing = MIN(MAX((double)reply.length * 0.15, 0.8), 8.0)
-                          + (double)(arc4random_uniform(15) / 10.0);
+            // 模拟打字：按字数算时间（0.15 秒/字，0.8~8 秒）+ 0~1.5 秒随机波动；可在设置页关闭
+            double typing = 0;
+            if ([AISettings typingSimulation]) {
+                typing = MIN(MAX((double)reply.length * 0.15, 0.8), 8.0)
+                       + (double)(arc4random_uniform(15) / 10.0);
+            }
             // 先记入上下文（发出后回显会被去重，不会记两遍）
             [[AIContext shared] appendAssistant:reply timestamp:(NSTimeInterval)time(NULL) chatId:chatId];
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(typing * NSEC_PER_SEC)),

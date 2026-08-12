@@ -36,6 +36,8 @@
 @property (nonatomic, strong) UITextField *freqField;
 @property (nonatomic, strong) UILabel *presLabel;
 @property (nonatomic, strong) UITextField *presField;
+@property (nonatomic, strong) UILabel *typingLabel;
+@property (nonatomic, strong) UISwitch *typingSwitch;
 @property (nonatomic, strong) UIView *promptCard;
 @property (nonatomic, strong) UILabel *promptLabel;
 @property (nonatomic, strong) UITextView *textView;
@@ -217,6 +219,11 @@ static UITextField *makeRowField(NSString *placeholder) {
     self.presField.keyboardType = UIKeyboardTypeDecimalPad;
     self.presField.text = [NSString stringWithFormat:@"%.2f", [AISettings presencePenalty]];
     [self.paramCard addSubview:self.presField];
+    self.typingLabel = makeRowLabel(@"模拟打字");
+    [self.paramCard addSubview:self.typingLabel];
+    self.typingSwitch = [[UISwitch alloc] initWithFrame:CGRectZero];
+    self.typingSwitch.on = [AISettings typingSimulation];
+    [self.paramCard addSubview:self.typingSwitch];
 
     // 系统提示词
     self.promptCard = makeCard();
@@ -332,8 +339,8 @@ static UITextField *makeRowField(NSString *placeholder) {
     y += rowHeight + gap;
     self.delayCard.frame = CGRectMake(margin, y, cardWidth, rowHeight);
     y += rowHeight + 12;
-    self.paramCard.frame = CGRectMake(margin, y, cardWidth, rowHeight * 3);
-    y += rowHeight * 3 + 12;
+    self.paramCard.frame = CGRectMake(margin, y, cardWidth, rowHeight * 4);
+    y += rowHeight * 4 + 12;
 
     CGFloat textCardHeight = 150;
     self.promptCard.frame = CGRectMake(margin, y, cardWidth, textCardHeight);
@@ -374,6 +381,8 @@ static UITextField *makeRowField(NSString *placeholder) {
     self.freqField.frame = CGRectMake(130, rowHeight, cardWidth - 130 - 14, rowHeight);
     self.presLabel.frame = CGRectMake(16, rowHeight * 2, 110, rowHeight);
     self.presField.frame = CGRectMake(130, rowHeight * 2, cardWidth - 130 - 14, rowHeight);
+    self.typingLabel.frame = CGRectMake(16, rowHeight * 3, 140, rowHeight);
+    self.typingSwitch.frame = CGRectMake(cardWidth - 60 - 14, rowHeight * 3 + 9, 60, 30);
 
     self.promptLabel.frame = CGRectMake(16, 12, cardWidth - 32, 20);
     self.textView.frame = CGRectMake(12, 38, cardWidth - 24, textCardHeight - 38 - 26);
@@ -578,6 +587,7 @@ static UITextField *makeRowField(NSString *placeholder) {
     [AISettings setFrequencyPenalty:(freq >= 0 && freq <= 2) ? freq : kAIRequestFrequencyPenalty];
     double pres = [self.presField.text doubleValue];
     [AISettings setPresencePenalty:(pres >= 0 && pres <= 2) ? pres : kAIRequestPresencePenalty];
+    [AISettings setTypingSimulation:self.typingSwitch.on];
     [AISettings setAutoSystemPrompt:self.textView.text];
     [AISettings setStyleSamples:self.styleView.text];
     [AISettings setUserProfile:self.profileView.text];
@@ -597,6 +607,7 @@ static UITextField *makeRowField(NSString *placeholder) {
     self.tempField.text = [NSString stringWithFormat:@"%.2f", kAIRequestTemperature];
     self.freqField.text = [NSString stringWithFormat:@"%.2f", kAIRequestFrequencyPenalty];
     self.presField.text = [NSString stringWithFormat:@"%.2f", kAIRequestPresencePenalty];
+    self.typingSwitch.on = YES;
     self.textView.text = kAIAutoSystemPrompt;
     self.styleView.text = kAIStyleSamplesDefault;
     self.profileView.text = kAIUserProfile;

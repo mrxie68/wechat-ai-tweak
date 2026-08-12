@@ -12,6 +12,7 @@ static NSString * const kAISettingsReplyDelayKey = @"WeChatAIReplyDelay";
 static NSString * const kAISettingsTemperatureKey = @"WeChatAITemperature";
 static NSString * const kAISettingsFrequencyPenaltyKey = @"WeChatAIFrequencyPenalty";
 static NSString * const kAISettingsPresencePenaltyKey = @"WeChatAIPresencePenalty";
+static NSString * const kAISettingsTypingSimulationKey = @"WeChatAITypingSimulation";
 static NSString * const kAISettingsChatOverridesKey = @"WeChatAIChatOverrides";
 
 @implementation AISettings
@@ -225,6 +226,18 @@ static NSString * const kAISettingsChatOverridesKey = @"WeChatAIChatOverrides";
 +(void)setPresencePenalty:(double)value {
     NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
     [defaults setDouble:value forKey:kAISettingsPresencePenaltyKey];
+    [defaults synchronize];
+}
+
++(BOOL)typingSimulation {
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    if ([defaults objectForKey:kAISettingsTypingSimulationKey] == nil) return YES;
+    return [defaults boolForKey:kAISettingsTypingSimulationKey];
+}
+
++(void)setTypingSimulation:(BOOL)value {
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    [defaults setBool:value forKey:kAISettingsTypingSimulationKey];
     [defaults synchronize];
 }
 
