@@ -41,6 +41,11 @@
 - (void)AddMsg:(id)arg1 MsgWrap:(id)arg2;
 - (id)GetFirstMsg:(NSString *)nsFromUsr;
 - (id)GetNextMsg:(NSString *)nsFromUsr fromMsg:(id)msg;
+- (void)GetMsg:(NSString *)nsFromUsr FromNode:(unsigned int)fromNode ToNode:(unsigned int)toNode;
+- (void)GetMsgList:(NSString *)nsFromUsr FromNode:(unsigned int)fromNode ToNode:(unsigned int)toNode;
+- (void)setDelegate:(id)delegate;
+- (void)addDelegate:(id)delegate;
+- (void)removeDelegate:(id)delegate;
 @end
 
 @interface WCMessageService : NSObject
@@ -130,18 +135,58 @@ static BOOL isChatAllowed(NSString *chatId) {
     return NO;
 }
 
-// 尝试用微信自己的消息接口拉取某个会话最近 N 条文字消息（运行时探测，找不到就返回空）
-static NSArray<NSString *> *fetchRecentTexts(NSString *chatId, NSInteger limit) {
-    NSMutableArray *texts = [NSMutableArray array];
-    CMessageMgr *mgr = wechatMessageMgr();
-    if (!mgr || chatId.length == 0) return texts;
+// 回调式拉取历史消息的临时代理（实现多个候选回调名，看微信调哪个）
+@interface AIMessageFetcherDelegate : NSObject
+@property (nonatomic, strong) NSMutableArray<NSString *> *texts;
+@property (nonatomic, copy) void (^done)(void);
+- (void)onGetMsg:(NSString *)usr MsgList:(NSArray *)list;
+- (void)OnGetMsg:(NSString *)usr MsgList:(NSArray *)list;
+- (void)onGetMsgList:(NSString *)usr MsgList:(NSArray *)list;
+- (void)GetMsg:(NSString *)usr MsgList:(NSArray *)list;
+@end
 
-    // 路径 1：GetFirstMsg: / GetNextMsg:fromMsg:（同步遍历，class-dump 常见签名）
+@implementation AIMessageFetcherDelegate
+
+- (void)collect:(NSArray *)list {
+    for (id wrap in list) {
+        @try {
+            if (![wrap respondsToSelector:@selector(m_uiMessageType)]) continue;
+            if ([wrap m_uiMessageType] != 1) continue;
+            NSString *content = [wrap m_nsContent] ?: @"";
+            if (content.length > 0 && ![content hasPrefix:@"<msg"]) {
+                [self.texts addObject:content];
+            }
+        } @catch (NSException *exception) {
+            // 单条解析失败不影响其他
+        }
+    }
+    if (self.done) self.done();
+}
+
+- (void)onGetMsg:(NSString *)usr MsgList:(NSArray *)list { [self collect:list]; }
+- (void)OnGetMsg:(NSString *)usr MsgList:(NSArray *)list { [self collect:list]; }
+- (void)onGetMsgList:(NSString *)usr MsgList:(NSArray *)list { [self collect:list]; }
+- (void)GetMsg:(NSString *)usr MsgList:(NSArray *)list { [self collect:list]; }
+
+@end
+
+// 尝试用微信自己的消息接口拉取某个会话最近 N 条文字消息（运行时探测，找不到就返回空）
+static NSArray<NSString *> *fetchRecentTexts(NSString *chatId, NSInteger limit, NSString **diag) {
+    NSMutableArray *texts = [NSMutableArray array];
+    NSMutableArray *diagParts = [NSMutableArray array];
+    CMessageMgr *mgr = wechatMessageMgr();
+    if (!mgr || chatId.length == 0) {
+        if (diag) *diag = @"获取 CMessageMgr 失败";
+        return texts;
+    }
+
+    // 路径 1：GetFirstMsg: / GetNextMsg:fromMsg:（同步遍历）
     if ([mgr respondsToSelector:@selector(GetFirstMsg:)] &&
         [mgr respondsToSelector:@selector(GetNextMsg:fromMsg:)]) {
         @try {
             id msg = [mgr GetFirstMsg:chatId];
             NSInteger guard = 0;
+            NSInteger collected = 0;
             while (msg && guard < 3000) {
                 guard++;
                 NSInteger type = 0;
@@ -152,6 +197,7 @@ static NSArray<NSString *> *fetchRecentTexts(NSString *chatId, NSInteger limit) 
                     NSString *content = [msg m_nsContent] ?: @"";
                     if (content.length > 0 && ![content hasPrefix:@"<msg"]) {
                         [texts addObject:content];
+                        collected++;
                     }
                 }
                 id next = [mgr GetNextMsg:chatId fromMsg:msg];
@@ -159,17 +205,56 @@ static NSArray<NSString *> *fetchRecentTexts(NSString *chatId, NSInteger limit) 
                 msg = next;
             }
             NSLog(kAITweakLogPrefix "历史消息拉取成功（GetFirstMsg 路径），%lu 条", (unsigned long)texts.count);
+            [diagParts addObject:[NSString stringWithFormat:@"A(GetFirstMsg)有,拿%ld条", (long)collected]];
         } @catch (NSException *exception) {
             [texts removeAllObjects];
             NSLog(kAITweakLogPrefix "GetFirstMsg 路径异常: %@", exception);
+            [diagParts addObject:@"A(GetFirstMsg)有,异常"];
         }
     } else {
         NSLog(kAITweakLogPrefix "微信版本没有 GetFirstMsg/GetNextMsg 接口，历史记录需另寻路径");
+        [diagParts addObject:@"A(GetFirstMsg)无"];
+    }
+
+    // 路径 2：GetMsg:FromNode:ToNode:（回调式，异步等 4 秒）
+    if ([mgr respondsToSelector:@selector(GetMsg:FromNode:ToNode:)] ||
+        [mgr respondsToSelector:@selector(GetMsgList:FromNode:ToNode:)]) {
+        @try {
+            dispatch_semaphore_t sem = dispatch_semaphore_create(0);
+            AIMessageFetcherDelegate *fetcher = [[AIMessageFetcherDelegate alloc] init];
+            fetcher.texts = [NSMutableArray array];
+            fetcher.done = ^{ dispatch_semaphore_signal(sem); };
+            if ([mgr respondsToSelector:@selector(setDelegate:)]) {
+                [mgr setDelegate:fetcher];
+            } else if ([mgr respondsToSelector:@selector(addDelegate:)]) {
+                [mgr addDelegate:fetcher];
+            }
+            if ([mgr respondsToSelector:@selector(GetMsg:FromNode:ToNode:)]) {
+                [mgr GetMsg:chatId FromNode:0 ToNode:(unsigned int)limit];
+            } else {
+                [mgr GetMsgList:chatId FromNode:0 ToNode:(unsigned int)limit];
+            }
+            dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, 4 * NSEC_PER_SEC));
+            [texts addObjectsFromArray:fetcher.texts];
+            if ([mgr respondsToSelector:@selector(removeDelegate:)]) {
+                [mgr removeDelegate:fetcher];
+            }
+            [diagParts addObject:[NSString stringWithFormat:@"B(GetMsg回调)有,拿%ld条",
+                                  (long)fetcher.texts.count]];
+        } @catch (NSException *exception) {
+            NSLog(kAITweakLogPrefix "GetMsg 回调路径异常: %@", exception);
+            [diagParts addObject:@"B(GetMsg回调)有,异常"];
+        }
+    } else {
+        [diagParts addObject:@"B(GetMsg回调)无"];
     }
 
     // 只保留最后 limit 条（按遍历顺序的“最近”）
     if (texts.count > limit) {
         [texts removeObjectsInRange:NSMakeRange(0, texts.count - limit)];
+    }
+    if (diag) {
+        *diag = [diagParts componentsJoinedByString:@"；"];
     }
     return texts;
 }
@@ -755,36 +840,44 @@ static NSMutableArray *g_recentReplyOrder = nil;
 }
 
 + (void)learnStyleForChat:(NSString *)chatId {
-    NSArray *texts = fetchRecentTexts(chatId, 100);
-    if (texts.count < 5) {
-        [self presentAlertWithTitle:@"记录太少"
-                            message:[NSString stringWithFormat:@"最近 100 条文字消息里只找到 %lu 条可用的（至少需要 5 条才能学习）。可以稍后再试，或直接在设置页粘贴聊天记录。", (unsigned long)texts.count]];
-        return;
-    }
+    // 拉取历史可能阻塞（回调路径要等几秒），放到后台线程，避免卡界面
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        NSString *diag = @"";
+        NSArray *texts = fetchRecentTexts(chatId, 100, &diag);
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (texts.count < 5) {
+                [self presentAlertWithTitle:@"记录太少"
+                                    message:[NSString stringWithFormat:
+                                        @"最近 100 条文字消息里只找到 %lu 条可用的（至少需要 5 条才能学习）。\n\n接口诊断：%@\n\n可以稍后再试，或直接在设置页粘贴聊天记录。",
+                                        (unsigned long)texts.count, diag.length ? diag : @"未知"]];
+                return;
+            }
 
-    NSString *joined = [texts componentsJoinedByString:@"\n"];
-    NSString *learnPrompt = @"你是一名聊天风格分析师。以下是某微信用户与其好友最近的聊天记录片段（包含用户本人的消息和对方的消息，可能不按时间顺序）。请总结这位“用户本人”的说话风格：语气、常用词/口头禅、句子长短、是否爱用表情和标点、回复习惯、惯用开场或结束语。用 150~250 字的中文直接输出总结，不要客套，不要写“分析如下”之类的开头。";
-    NSArray *messages = @[@{@"role": @"user", @"content": joined}];
+            NSString *joined = [texts componentsJoinedByString:@"\n"];
+            NSString *learnPrompt = @"你是一名聊天风格分析师。以下是某微信用户与其好友最近的聊天记录片段（包含用户本人的消息和对方的消息，可能不按时间顺序）。请总结这位“用户本人”的说话风格：语气、常用词/口头禅、句子长短、是否爱用表情和标点、回复习惯、惯用开场或结束语。用 150~250 字的中文直接输出总结，不要客套，不要写“分析如下”之类的开头。";
+            NSArray *messages = @[@{@"role": @"user", @"content": joined}];
 
-    [[AIAPIClient shared] sendMessages:messages
-                          systemPrompt:learnPrompt
-                          styleProfile:nil
-                            completion:^(NSString *reply, NSError *error) {
-        if (error) {
-            NSLog(kAITweakLogPrefix "学习风格失败: %@", error);
-            [self presentAlertWithTitle:@"学习失败"
-                                message:@"调用 DeepSeek 失败（网络异常、API Key 错误或余额不足），请稍后重试。"];
-            return;
-        }
-        NSString *profile = [reply stringByTrimmingCharactersInSet:
-                             [NSCharacterSet whitespaceAndNewlineCharacterSet]];
-        [AISettings setStyleProfile:profile forChat:chatId];
-        NSLog(kAITweakLogPrefix "风格学习完成（%lu 条记录）: %@", (unsigned long)texts.count, chatId);
-        [self presentAlertWithTitle:@"学习完成"
-                            message:[NSString stringWithFormat:
-                                @"已保存这个好友的风格档案，之后与 ta 的对话会用你的语气回复。\n\n档案摘要：\n%@",
-                                profile.length > 200 ? [profile substringToIndex:200] : profile]];
-    }];
+            [[AIAPIClient shared] sendMessages:messages
+                                  systemPrompt:learnPrompt
+                                  styleProfile:nil
+                                    completion:^(NSString *reply, NSError *error) {
+                if (error) {
+                    NSLog(kAITweakLogPrefix "学习风格失败: %@", error);
+                    [self presentAlertWithTitle:@"学习失败"
+                                        message:@"调用 DeepSeek 失败（网络异常、API Key 错误或余额不足），请稍后重试。"];
+                    return;
+                }
+                NSString *profile = [reply stringByTrimmingCharactersInSet:
+                                     [NSCharacterSet whitespaceAndNewlineCharacterSet]];
+                [AISettings setStyleProfile:profile forChat:chatId];
+                NSLog(kAITweakLogPrefix "风格学习完成（%lu 条记录）: %@", (unsigned long)texts.count, chatId);
+                [self presentAlertWithTitle:@"学习完成"
+                                    message:[NSString stringWithFormat:
+                                        @"已保存这个好友的风格档案，之后与 ta 的对话会用你的语气回复。\n\n档案摘要：\n%@",
+                                        profile.length > 200 ? [profile substringToIndex:200] : profile]];
+            }];
+        });
+    });
 }
 
 @end
