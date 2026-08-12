@@ -7,7 +7,7 @@
 // ============================================================
 
 // API Key（DeepSeek 示例，去 https://platform.deepseek.com 申请）
-#define kAIAPIKey @"sk-xxxxxxxxxxxxxxxxxxxxxxxx"
+#define kAIAPIKey @"sk-REMOVED"
 
 // OpenAI 兼容接口地址（DeepSeek 默认）
 #define kAIBaseURL @"https://api.deepseek.com"
