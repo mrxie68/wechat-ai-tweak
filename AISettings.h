@@ -13,5 +13,7 @@
 + (void)setEnabled:(BOOL)enabled;
 + (double)replyDelay;                  // 思考延迟（秒）
 + (void)setReplyDelay:(double)delay;
++ (BOOL)chatEnabled:(NSString *)chatId defaultEnabled:(BOOL)defaultEnabled; // 会话级开关
++ (void)setChatEnabled:(BOOL)enabled chatId:(NSString *)chatId;
 
 @end

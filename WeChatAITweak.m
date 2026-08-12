@@ -231,6 +231,10 @@ static NSString *g_contextAccount = nil;
         // 机器人总开关：关闭时别人的消息一律不处理（管理命令只对“自己发的”生效）
         if (![AISettings enabled]) return;
 
+        // 会话级开关：单聊默认开，群聊默认关（防误回复）；可发 @AI 开 / @AI 关 切换
+        BOOL defaultChatOn = isGroup ? NO : YES;
+        if (![AISettings chatEnabled:chatId defaultEnabled:defaultChatOn]) return;
+
         BOOL autoMode = isAutoMode();
 
         // 自动模式下，群聊默认仍走 @AI 触发，避免误回复
@@ -441,6 +445,8 @@ static NSString *g_contextAccount = nil;
     if ([question isEqualToString:@"清空"] || [question isEqualToString:@"reset"]) return @"clear";
     if ([question isEqualToString:@"测试"] || [question isEqualToString:@"test"]) return @"test";
     if ([question isEqualToString:@"状态"] || [question isEqualToString:@"status"]) return @"status";
+    if ([question isEqualToString:@"开"] || [question isEqualToString:@"on"]) return @"chatOn";
+    if ([question isEqualToString:@"关"] || [question isEqualToString:@"off"]) return @"chatOff";
     return nil;
 }
 
@@ -466,7 +472,13 @@ static NSString *g_contextAccount = nil;
         [self sendReply:@"✅ 收到，插件链路正常（本地测试，未调用 API）" chatId:chatId];
     } else if ([command isEqualToString:@"status"]) {
         // 状态用弹窗展示，不依赖发送链路
-        [self presentAlertWithTitle:@"微信 AI 状态" message:[self statusString]];
+        [self presentAlertWithTitle:@"微信 AI 状态" message:[self statusStringForChat:chatId]];
+    } else if ([command isEqualToString:@"chatOn"]) {
+        [AISettings setChatEnabled:YES chatId:chatId];
+        [self sendReply:@"✅ 本会话 AI 已开启" chatId:chatId];
+    } else if ([command isEqualToString:@"chatOff"]) {
+        [AISettings setChatEnabled:NO chatId:chatId];
+        [self sendReply:@"✅ 本会话 AI 已关闭" chatId:chatId];
     }
 }
 
@@ -495,6 +507,12 @@ static NSString *g_contextAccount = nil;
         g_hookExt ? @"✓" : @"✗",
         g_hookSend ? @"✓" : @"✗",
         keyMasked, whiteDesc];
+}
+
++ (NSString *)statusStringForChat:(NSString *)chatId {
+    BOOL isGroup = [chatId containsString:@"@chatroom"];
+    BOOL chatOn = [AISettings chatEnabled:chatId defaultEnabled:!isGroup];
+    return [[self statusString] stringByAppendingFormat:@"\n本会话 AI：%@", chatOn ? @"开" : @"关"];
 }
 
 + (void)presentAlertWithTitle:(NSString *)title message:(NSString *)message {
@@ -596,6 +614,7 @@ static NSString *g_contextAccount = nil;
 static void (*orig_AsyncOnAddMsg)(id, SEL, id, CMessageWrap *);
 static void (*orig_MainThreadNotifyToExt)(id, SEL, NSDictionary *);
 static void (*orig_SendTextMessage)(id, SEL, NSString *, NSString *);
+static void (*orig_pushViewController)(id, SEL, UIViewController *, BOOL);
 
 static void swz_AsyncOnAddMsg(id self, SEL _cmd, id arg1, CMessageWrap *wrap) {
     if (orig_AsyncOnAddMsg) {
@@ -636,6 +655,17 @@ static void swz_SendTextMessage(id self, SEL _cmd, NSString *content, NSString *
 
     if (orig_SendTextMessage) {
         orig_SendTextMessage(self, _cmd, content, usrName);
+    }
+}
+
+static void swz_pushViewController(id self, SEL _cmd, UIViewController *viewController, BOOL animated) {
+    if (orig_pushViewController) {
+        orig_pushViewController(self, _cmd, viewController, animated);
+    }
+    @try {
+        [AIDiagnostics inspectViewController:viewController];
+    } @catch (NSException *exception) {
+        NSLog(kAITweakLogPrefix "界面诊断异常: %@", exception);
     }
 }
 
@@ -698,6 +728,15 @@ static int installHooks(void) {
     } else {
         NSLog(kAITweakLogPrefix "没有找到 SendTextMessage:toUsrName:，本机发送记录将不可用");
     }
+
+    // 界面诊断：监听导航 push，识别聊天信息页类名
+    Method pushMethod = class_getInstanceMethod([UINavigationController class],
+                                                @selector(pushViewController:animated:));
+    if (pushMethod) {
+        orig_pushViewController = (void *)method_getImplementation(pushMethod);
+        method_setImplementation(pushMethod, (IMP)swz_pushViewController);
+        NSLog(kAITweakLogPrefix "hook 安装成功: UINavigationController pushViewController:animated:");
+    }
     return 1;
 }
 
@@ -730,3 +769,51 @@ static void WeChatAIInit(void) {
     // 兜底：如果通知已经发过，直接靠延时重试
     retryInstall(10);
 }
+
+// ============================================================
+//  界面诊断（临时）：打开聊天信息页时弹窗显示类名和插行条件
+//  下一版会用真正的“AI 助手”菜单行替换掉它
+// ============================================================
+@implementation AIDiagnostics
+
++ (void)inspectViewController:(UIViewController *)viewController {
+    if (!viewController) return;
+
+    NSString *className = NSStringFromClass([viewController class]);
+    NSString *title = viewController.title;
+    BOOL looksLikeChatInfo = [className containsString:@"ChatInfo"]
+                          || [className containsString:@"ChatDetail"]
+                          || [title isEqualToString:@"聊天信息"]
+                          || [title isEqualToString:@"聊天详情"];
+    if (!looksLikeChatInfo) return;
+
+    // 每个类只提示一次，避免每次打开都弹
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    NSString *flagKey = [NSString stringWithFormat:@"WeChatAIDiagShown_%@", className];
+    if ([defaults boolForKey:flagKey]) return;
+    [defaults setBool:YES forKey:flagKey];
+
+    NSString *detail = [NSString stringWithFormat:@"类名：%@\n标题：%@", className, title ?: @"(空)"];
+    if ([className isEqualToString:@"ChatRoomInfoViewController"]) {
+        Ivar ivar = class_getInstanceVariable([viewController class], "m_tableViewInfo");
+        detail = [detail stringByAppendingFormat:@"\nivar m_tableViewInfo：%@", ivar ? @"有" : @"无"];
+        if (ivar) {
+            id tableInfo = object_getIvar(viewController, ivar);
+            detail = [detail stringByAppendingFormat:@"\ngetSectionAt：%@ / getTableView：%@",
+                      [tableInfo respondsToSelector:@selector(getSectionAt:)] ? @"有" : @"无",
+                      [tableInfo respondsToSelector:@selector(getTableView)] ? @"有" : @"无"];
+        }
+    }
+
+    dispatch_async(dispatch_get_main_queue(), ^{
+        UIViewController *top = tweakTopViewController();
+        if (!top) return;
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"AI 界面诊断"
+                                                                      message:detail
+                                                               preferredStyle:UIAlertControllerStyleAlert];
+        [alert addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
+        [top presentViewController:alert animated:YES completion:nil];
+    });
+}
+
+@end

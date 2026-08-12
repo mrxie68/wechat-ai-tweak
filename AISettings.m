@@ -6,6 +6,7 @@ static NSString * const kAISettingsAPIKeyKey = @"WeChatAIAPIKey";
 static NSString * const kAISettingsModelKey = @"WeChatAIModel";
 static NSString * const kAISettingsEnabledKey = @"WeChatAIEnabled";
 static NSString * const kAISettingsReplyDelayKey = @"WeChatAIReplyDelay";
+static NSString * const kAISettingsChatOverridesKey = @"WeChatAIChatOverrides";
 
 @implementation AISettings
 
@@ -85,6 +86,24 @@ static NSString * const kAISettingsReplyDelayKey = @"WeChatAIReplyDelay";
 + (void)setReplyDelay:(double)delay {
     NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
     [defaults setDouble:delay forKey:kAISettingsReplyDelayKey];
+    [defaults synchronize];
+}
+
++ (BOOL)chatEnabled:(NSString *)chatId defaultEnabled:(BOOL)defaultEnabled {
+    if (chatId.length == 0) return defaultEnabled;
+    NSDictionary *overrides = [[NSUserDefaults standardUserDefaults] dictionaryForKey:kAISettingsChatOverridesKey];
+    NSNumber *value = overrides[chatId];
+    if (value) return value.boolValue;
+    return defaultEnabled;
+}
+
++ (void)setChatEnabled:(BOOL)enabled chatId:(NSString *)chatId {
+    if (chatId.length == 0) return;
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    NSMutableDictionary *overrides = [[defaults dictionaryForKey:kAISettingsChatOverridesKey] mutableCopy];
+    if (!overrides) overrides = [NSMutableDictionary dictionary];
+    overrides[chatId] = @(enabled);
+    [defaults setObject:overrides forKey:kAISettingsChatOverridesKey];
     [defaults synchronize];
 }
 
