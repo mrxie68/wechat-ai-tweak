@@ -12,6 +12,7 @@
 #import <UIKit/UIKit.h>
 #import <objc/runtime.h>
 #import <time.h>
+#import <stdlib.h>
 #import "AIConfig.h"
 #import "AIContext.h"
 #import "AIAPIClient.h"
@@ -321,23 +322,32 @@ static BOOL g_sendingReply = NO;
         [g_inFlightChats addObject:chatId];
     }
 
-    double delay = kAIReplyDelaySeconds;
+    double delay = [AISettings replyDelay];
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{
         NSArray *history = [[AIContext shared] messagesForChat:chatId];
         [[AIAPIClient shared] sendMessages:history
                               systemPrompt:[AISettings autoSystemPrompt]
                                 completion:^(NSString *reply, NSError *error) {
-            @synchronized (self) {
-                [g_inFlightChats removeObject:chatId];
-            }
             if (error) {
+                @synchronized (self) {
+                    [g_inFlightChats removeObject:chatId];
+                }
                 NSLog(kAITweakLogPrefix "自动回复失败: %@", error);
                 [self sendReply:@"⚠️ AI 调用失败（请检查 API Key / 网络 / 余额）" chatId:chatId];
                 return;
             }
-            // 发送 hook 会把这条回复记进上下文
-            [self sendReply:reply chatId:chatId];
+            // 模拟打字：按字数算时间（0.2 秒/字，1~10 秒）+ 0~2 秒随机波动
+            double typing = MIN(MAX((double)reply.length * 0.2, 1.0), 10.0)
+                          + (double)(arc4random_uniform(20) / 10.0);
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(typing * NSEC_PER_SEC)),
+                           dispatch_get_main_queue(), ^{
+                @synchronized (self) {
+                    [g_inFlightChats removeObject:chatId];
+                }
+                // 回复发出后，收消息回显会把它记进上下文
+                [self sendReply:reply chatId:chatId];
+            });
         }];
     });
 }
@@ -407,9 +417,10 @@ static BOOL g_sendingReply = NO;
     NSString *whiteDesc = whiteRaw.length == 0 ? @"全部会话" : whiteRaw;
 
     return [NSString stringWithFormat:
-        @"🤖 微信 AI v%@\n开关：%@\n模式：%@\n模型：%@\nhook：收消息Async %@ / 收消息Ext %@ / 发送 %@\nAPI Key：%@\n白名单：%@",
+        @"🤖 微信 AI v%@\n开关：%@\n模式：%@\n模型：%@\n延迟：%.1f秒\nhook：收消息Async %@ / 收消息Ext %@ / 发送 %@\nAPI Key：%@\n白名单：%@",
         kAITweakVersion, [AISettings enabled] ? @"开" : @"关",
         mode, [AISettings model],
+        [AISettings replyDelay],
         g_hookAsync ? @"✓" : @"✗",
         g_hookExt ? @"✓" : @"✗",
         g_hookSend ? @"✓" : @"✗",

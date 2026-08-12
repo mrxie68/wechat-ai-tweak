@@ -9,6 +9,7 @@
 @property (nonatomic, strong) UITextField *modelField;
 @property (nonatomic, strong) UISwitch *enabledSwitch;
 @property (nonatomic, strong) UILabel *enabledLabel;
+@property (nonatomic, strong) UITextField *delayField;
 @end
 
 @implementation AIPromptEditorViewController
@@ -58,6 +59,14 @@
     self.modelField.font = [UIFont systemFontOfSize:14];
     [self.view addSubview:self.modelField];
 
+    self.delayField = [[UITextField alloc] initWithFrame:CGRectMake(0, 0, 0, 0)];
+    self.delayField.placeholder = @"思考延迟（秒）";
+    self.delayField.text = [NSString stringWithFormat:@"%.1f", [AISettings replyDelay]];
+    self.delayField.borderStyle = UITextBorderStyleRoundedRect;
+    self.delayField.keyboardType = UIKeyboardTypeDecimalPad;
+    self.delayField.font = [UIFont systemFontOfSize:14];
+    [self.view addSubview:self.delayField];
+
     self.textView = [[UITextView alloc] initWithFrame:CGRectMake(0, 0, 0, 0)];
     self.textView.font = [UIFont systemFontOfSize:16];
     self.textView.text = [AISettings autoSystemPrompt];
@@ -80,7 +89,8 @@
     self.enabledSwitch.frame = CGRectMake(width - 72, 18, 60, 30);
     self.apiKeyField.frame = CGRectMake(12, 64, width - 24, 40);
     self.modelField.frame = CGRectMake(12, 112, width - 24, 40);
-    self.textView.frame = CGRectMake(12, 160, width - 24, height - 160 - 90);
+    self.delayField.frame = CGRectMake(12, 160, width - 24, 40);
+    self.textView.frame = CGRectMake(12, 208, width - 24, height - 208 - 90);
     self.resetButton.frame = CGRectMake(12, height - 90, width - 24, 44);
 }
 
@@ -92,6 +102,8 @@
     [AISettings setEnabled:self.enabledSwitch.on];
     [AISettings setApiKey:self.apiKeyField.text];
     [AISettings setModel:self.modelField.text];
+    double delay = [self.delayField.text doubleValue];
+    [AISettings setReplyDelay:(delay > 0 && delay <= 30) ? delay : kAIReplyDelaySeconds];
     [AISettings setAutoSystemPrompt:self.textView.text];
     [self dismissViewControllerAnimated:YES completion:nil];
 }
@@ -100,6 +112,7 @@
     self.enabledSwitch.on = YES;
     self.apiKeyField.text = kAIAPIKey;
     self.modelField.text = kAIModel;
+    self.delayField.text = [NSString stringWithFormat:@"%.1f", kAIReplyDelaySeconds];
     self.textView.text = kAIAutoSystemPrompt;
 }
 

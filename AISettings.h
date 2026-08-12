@@ -11,5 +11,7 @@
 + (void)setModel:(NSString *)model;
 + (BOOL)enabled;                       // 机器人总开关（默认开）
 + (void)setEnabled:(BOOL)enabled;
++ (double)replyDelay;                  // 思考延迟（秒）
++ (void)setReplyDelay:(double)delay;
 
 @end

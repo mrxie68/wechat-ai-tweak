@@ -5,6 +5,7 @@ static NSString * const kAISettingsAutoPromptKey = @"WeChatAIAutoSystemPrompt";
 static NSString * const kAISettingsAPIKeyKey = @"WeChatAIAPIKey";
 static NSString * const kAISettingsModelKey = @"WeChatAIModel";
 static NSString * const kAISettingsEnabledKey = @"WeChatAIEnabled";
+static NSString * const kAISettingsReplyDelayKey = @"WeChatAIReplyDelay";
 
 @implementation AISettings
 
@@ -65,6 +66,18 @@ static NSString * const kAISettingsEnabledKey = @"WeChatAIEnabled";
 + (void)setEnabled:(BOOL)enabled {
     NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
     [defaults setBool:enabled forKey:kAISettingsEnabledKey];
+    [defaults synchronize];
+}
+
++ (double)replyDelay {
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    if ([defaults objectForKey:kAISettingsReplyDelayKey] == nil) return kAIReplyDelaySeconds;
+    return [defaults doubleForKey:kAISettingsReplyDelayKey];
+}
+
++ (void)setReplyDelay:(double)delay {
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    [defaults setDouble:delay forKey:kAISettingsReplyDelayKey];
     [defaults synchronize];
 }
 

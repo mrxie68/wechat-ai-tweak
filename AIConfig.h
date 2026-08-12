@@ -26,8 +26,9 @@
 //  @"trigger" = 手动触发：只有 @AI 开头的消息才回复
 #define kAIReplyMode @"auto"
 
-// 自动模式下的回复延迟（秒），稍微等一拍更像真人
-#define kAIReplyDelaySeconds 1.0
+// 自动模式下的“思考延迟”（秒）：收到消息后先等这一段时间再请求 AI。
+// 除此之外还有模拟打字时间（按回复字数计算），总时长更像真人。
+#define kAIReplyDelaySeconds 2.0
 
 // 自动模式下是否也回复群聊（建议 NO，群里人杂，容易出事）
 #define kAIAutoReplyInGroups NO
@@ -59,6 +60,6 @@
 #define kAITweakLogPrefix @"[WeChatAI] "
 
 // 插件版本（弹窗/状态命令会显示，方便确认手机上装的是不是最新编译）
-#define kAITweakVersion @"0.3.1"
+#define kAITweakVersion @"0.3.2"
 
 #endif
