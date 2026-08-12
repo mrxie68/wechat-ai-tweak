@@ -54,6 +54,12 @@
 + (UITableView *)findTableViewInView:(UIView *)view;
 @end
 
+// 微信原生 cell 工厂（运行时存在，头文件不完整，这里补声明）
+@interface WCTableViewNormalCellManager (AITweak)
++ (id)normalCellForSel:(SEL)sel target:(id)target title:(NSString *)title accessoryType:(long long)accessoryType;
+- (void)configureCell:(UITableViewCell *)cell;
+@end
+
 @interface CContact : NSObject
 @property (nonatomic, retain) NSString *m_nsUsrName;
 @end
