@@ -312,7 +312,7 @@ static NSMutableArray *g_recentReplyOrder = nil;
         // 机器人总开关：关闭时别人的消息一律不处理（管理命令只对“自己发的”生效）
         if (![AISettings enabled]) return;
 
-        // 会话级开关：按类别总开关（单聊/群聊）判断，聊天信息页可单独改
+        // 会话级开关：默认全关，只有聊天信息页单独开过的会话才回复
         if (![AISettings chatEnabled:chatId]) return;
 
         BOOL autoMode = isAutoMode();
@@ -545,10 +545,8 @@ static NSMutableArray *g_recentReplyOrder = nil;
     NSString *tableDiag = g_chatTableDiag.length ? g_chatTableDiag : @"（还没打开过聊天信息页）";
 
     return [NSString stringWithFormat:
-        @"🤖 微信 AI v%@\n总开关：%@\n单聊/群聊：%@ / %@\n模式：%@\n模型：%@\n延迟：%.1f秒\nhook：收消息Async %@ / 收消息Ext %@ / 发送 %@\nAPI Key：%@\n白名单：%@\n表格诊断：%@",
+        @"🤖 微信 AI v%@\n总开关：%@\n模式：%@\n模型：%@\n延迟：%.1f秒\nhook：收消息Async %@ / 收消息Ext %@ / 发送 %@\nAPI Key：%@\n白名单：%@\n表格诊断：%@",
         kAITweakVersion, [AISettings enabled] ? @"开" : @"关",
-        [AISettings singleChatEnabled] ? @"开" : @"关",
-        [AISettings groupChatEnabled] ? @"开" : @"关",
         mode, [AISettings model],
         [AISettings replyDelay],
         g_hookAsync ? @"✓" : @"✗",
@@ -1059,7 +1057,7 @@ static int installHooks(void) {
             UIViewController *top = tweakTopViewController();
             if (!top) return;
             UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"微信 AI 助手已加载"
-                message:[NSString stringWithFormat:@"v%@ 已加载\n默认单聊、群聊 AI 均为关闭，需在设置页打开一键开关，或在聊天信息页单独打开。\n设置入口：我的 → 插件页面 → 微信 AI 助手", kAITweakVersion]
+                message:[NSString stringWithFormat:@"v%@ 已加载\n默认全部会话的 AI 均为关闭，在聊天信息页打开“AI 助手”后，该会话才会自动回复。\n设置入口：我的 → 插件页面 → 微信 AI 助手", kAITweakVersion]
                 preferredStyle:UIAlertControllerStyleAlert];
             [alert addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
             [top presentViewController:alert animated:YES completion:nil];

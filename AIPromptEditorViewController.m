@@ -17,13 +17,6 @@
 @property (nonatomic, strong) UIView *statusCard;
 @property (nonatomic, strong) UILabel *statusLabel;
 @property (nonatomic, strong) UILabel *statusValueLabel;
-@property (nonatomic, strong) UIView *singleChatCard;
-@property (nonatomic, strong) UILabel *singleChatLabel;
-@property (nonatomic, strong) UISwitch *singleChatSwitch;
-@property (nonatomic, strong) UIView *groupChatCard;
-@property (nonatomic, strong) UILabel *groupChatLabel;
-@property (nonatomic, strong) UISwitch *groupChatSwitch;
-@property (nonatomic, strong) UILabel *categoryHint;
 @property (nonatomic, strong) UIView *modeCard;
 @property (nonatomic, strong) UILabel *modeLabel;
 @property (nonatomic, strong) UILabel *modeValueLabel;
@@ -141,32 +134,6 @@ static UITextField *makeRowField(NSString *placeholder) {
     self.statusCard.userInteractionEnabled = YES;
     [self.statusCard addGestureRecognizer:[[UITapGestureRecognizer alloc]
                                            initWithTarget:self action:@selector(statusTapped)]];
-
-    // 单聊 AI 助手（一键开/关所有单聊）
-    self.singleChatCard = makeCard();
-    [self.contentView addSubview:self.singleChatCard];
-    self.singleChatLabel = makeRowLabel(@"单聊 AI 助手");
-    [self.singleChatCard addSubview:self.singleChatLabel];
-    self.singleChatSwitch = [[UISwitch alloc] initWithFrame:CGRectZero];
-    self.singleChatSwitch.on = [AISettings singleChatEnabled];
-    [self.singleChatCard addSubview:self.singleChatSwitch];
-
-    // 群聊 AI 助手（一键开/关所有群聊）
-    self.groupChatCard = makeCard();
-    [self.contentView addSubview:self.groupChatCard];
-    self.groupChatLabel = makeRowLabel(@"群聊 AI 助手");
-    [self.groupChatCard addSubview:self.groupChatLabel];
-    self.groupChatSwitch = [[UISwitch alloc] initWithFrame:CGRectZero];
-    self.groupChatSwitch.on = [AISettings groupChatEnabled];
-    [self.groupChatCard addSubview:self.groupChatSwitch];
-
-    // 类别开关说明：避免误解“关了还在回”
-    self.categoryHint = [[UILabel alloc] initWithFrame:CGRectZero];
-    self.categoryHint.text = @"提示：上面两个开关只改这一类会话的默认状态；在聊天信息页单独开/关过的会话不受影响。默认单聊、群聊都是关闭的；想一键全部停用，请关掉“机器人开关”。";
-    self.categoryHint.font = [UIFont systemFontOfSize:12];
-    self.categoryHint.textColor = [UIColor secondaryLabelColor];
-    self.categoryHint.numberOfLines = 0;
-    [self.contentView addSubview:self.categoryHint];
 
     // 回复模式
     self.modeCard = makeCard();
@@ -302,12 +269,6 @@ static UITextField *makeRowField(NSString *placeholder) {
 
     self.statusCard.frame = CGRectMake(margin, y, cardWidth, rowHeight);
     y += rowHeight + gap;
-    self.singleChatCard.frame = CGRectMake(margin, y, cardWidth, rowHeight);
-    y += rowHeight + gap;
-    self.groupChatCard.frame = CGRectMake(margin, y, cardWidth, rowHeight);
-    y += rowHeight + gap;
-    self.categoryHint.frame = CGRectMake(margin + 4, y, cardWidth - 8, 52);
-    y += 52 + 8;
     self.modeCard.frame = CGRectMake(margin, y, cardWidth, rowHeight);
     y += rowHeight + gap;
     self.keyCard.frame = CGRectMake(margin, y, cardWidth, rowHeight);
@@ -337,12 +298,6 @@ static UITextField *makeRowField(NSString *placeholder) {
 
     self.statusLabel.frame = CGRectMake(16, 0, 200, rowHeight);
     self.statusValueLabel.frame = CGRectMake(cardWidth - 50, 0, 30, rowHeight);
-
-    self.singleChatLabel.frame = CGRectMake(16, 0, 200, rowHeight);
-    self.singleChatSwitch.frame = CGRectMake(cardWidth - 60 - 14, (rowHeight - 30) / 2, 60, 30);
-
-    self.groupChatLabel.frame = CGRectMake(16, 0, 200, rowHeight);
-    self.groupChatSwitch.frame = CGRectMake(cardWidth - 60 - 14, (rowHeight - 30) / 2, 60, 30);
 
     self.modeLabel.frame = CGRectMake(16, 0, 110, rowHeight);
     self.modeValueLabel.frame = CGRectMake(130, 0, cardWidth - 130 - 14, rowHeight);
@@ -537,8 +492,6 @@ static UITextField *makeRowField(NSString *placeholder) {
 - (void)saveTapped {
     NSString *key = self.editingKey ? self.apiKeyField.text : self.apiKeyReal;
     [AISettings setEnabled:self.enabledSwitch.on];
-    [AISettings setSingleChatEnabled:self.singleChatSwitch.on];
-    [AISettings setGroupChatEnabled:self.groupChatSwitch.on];
     [AISettings setApiKey:key];
     double delay = [self.delayField.text doubleValue];
     [AISettings setReplyDelay:(delay > 0 && delay <= 30) ? delay : kAIReplyDelaySeconds];
@@ -549,8 +502,6 @@ static UITextField *makeRowField(NSString *placeholder) {
 
 - (void)resetTapped {
     self.enabledSwitch.on = YES;
-    self.singleChatSwitch.on = NO;
-    self.groupChatSwitch.on = NO;
     self.apiKeyReal = kAIAPIKey;
     self.apiKeyField.text = [self maskedKey:kAIAPIKey];
     self.editingKey = NO;

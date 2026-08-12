@@ -9,8 +9,6 @@ static NSString * const kAISettingsReplyModeKey = @"WeChatAIReplyMode";
 static NSString * const kAISettingsEnabledKey = @"WeChatAIEnabled";
 static NSString * const kAISettingsReplyDelayKey = @"WeChatAIReplyDelay";
 static NSString * const kAISettingsChatOverridesKey = @"WeChatAIChatOverrides";
-static NSString * const kAISettingsSingleChatKey = @"WeChatAISingleChatEnabled";
-static NSString * const kAISettingsGroupChatKey = @"WeChatAIGroupChatEnabled";
 
 @implementation AISettings
 
@@ -142,34 +140,8 @@ static NSString * const kAISettingsGroupChatKey = @"WeChatAIGroupChatEnabled";
 }
 
 + (BOOL)chatEnabled:(NSString *)chatId {
-    BOOL isGroup = [chatId containsString:@"@chatroom"];
-    // 设置页的一键开关只是类别默认值；聊天信息页单独设置优先
-    BOOL defaultEnabled = isGroup ? [self groupChatEnabled] : [self singleChatEnabled];
-    return [self chatEnabled:chatId defaultEnabled:defaultEnabled];
-}
-
-+ (BOOL)singleChatEnabled {
-    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
-    if ([defaults objectForKey:kAISettingsSingleChatKey] == nil) return NO; // 默认关（和群聊一致，防误回复）
-    return [defaults boolForKey:kAISettingsSingleChatKey];
-}
-
-+ (void)setSingleChatEnabled:(BOOL)enabled {
-    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
-    [defaults setBool:enabled forKey:kAISettingsSingleChatKey];
-    [defaults synchronize];
-}
-
-+ (BOOL)groupChatEnabled {
-    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
-    if ([defaults objectForKey:kAISettingsGroupChatKey] == nil) return NO; // 默认关（防误回复）
-    return [defaults boolForKey:kAISettingsGroupChatKey];
-}
-
-+ (void)setGroupChatEnabled:(BOOL)enabled {
-    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
-    [defaults setBool:enabled forKey:kAISettingsGroupChatKey];
-    [defaults synchronize];
+    // 默认全部关闭；只有聊天信息页的“AI 助手”开关单独开过的会话才回复
+    return [self chatEnabled:chatId defaultEnabled:NO];
 }
 
 @end
