@@ -17,6 +17,7 @@ clang \
   -framework Foundation \
   -framework UIKit \
   -framework CoreGraphics \
+  -lsqlite3 \
   -o wechat-ai.dylib \
   AIContext.m AIAPIClient.m AISettings.m AIPromptEditorViewController.m WeChatAITweak.m
 

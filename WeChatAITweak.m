@@ -13,6 +13,8 @@
 #import <objc/runtime.h>
 #import <time.h>
 #import <stdlib.h>
+#import <string.h>
+#import <sqlite3.h>
 #import "AIConfig.h"
 #import "AIContext.h"
 #import "AIAPIClient.h"
@@ -210,13 +212,366 @@ static NSString *probeHistoryAPIs(void) {
     return [lines componentsJoinedByString:@"\n"];
 }
 
+// ==================== 深度体检（类枚举 + 数据库结构） ====================
+
+static NSString *aiCapString(NSString *s, NSUInteger max) {
+    if (s.length <= max) return s;
+    NSRange r = [s rangeOfComposedCharacterSequencesAtIndex:max - 1];
+    return [s substringToIndex:NSMaxRange(r)];
+}
+
+static BOOL aiClassNameMatchesProbe(NSString *name) {
+    NSArray *kws = @[@"Msg", @"Message", @"Chat", @"Session", @"History",
+                     @"Record", @"WCDB", @"MMDB", @"Service"];
+    for (NSString *kw in kws) {
+        if ([name rangeOfString:kw].location != NSNotFound) return YES;
+    }
+    return NO;
+}
+
+static BOOL aiMethodNameMatchesProbe(NSString *sel) {
+    NSArray *kws = @[@"Msg", @"Message", @"Query", @"History", @"Recent",
+                     @"List", @"Node", @"Local", @"CreateTime", @"Fetch",
+                     @"Load", @"First", @"Next"];
+    for (NSString *kw in kws) {
+        if ([sel rangeOfString:kw].location != NSNotFound) return YES;
+    }
+    return NO;
+}
+
+static void aiAppendClassMethods(Class cls, NSMutableArray *hits, NSUInteger cap) {
+    unsigned int count = 0;
+    Method *methods = class_copyMethodList(cls, &count);
+    for (unsigned int i = 0; i < count && hits.count < cap; i++) {
+        NSString *sel = NSStringFromSelector(method_getName(methods[i]));
+        if (sel.length > 0 && aiMethodNameMatchesProbe(sel)) [hits addObject:sel];
+    }
+    free(methods);
+    methods = class_copyMethodList(object_getClass(cls), &count);
+    for (unsigned int i = 0; i < count && hits.count < cap; i++) {
+        NSString *sel = NSStringFromSelector(method_getName(methods[i]));
+        if (sel.length > 0 && aiMethodNameMatchesProbe(sel)) [hits addObject:[@"+" stringByAppendingString:sel]];
+    }
+    free(methods);
+}
+
+static NSString *probeLoadedMessageClasses(void) {
+    @try {
+        NSMutableArray *matches = [NSMutableArray array];
+        int classCount = objc_getClassList(NULL, 0);
+        Class *classes = NULL;
+        if (classCount > 0) {
+            classes = (Class *)malloc(sizeof(Class) * (unsigned long)classCount);
+            objc_getClassList(classes, classCount);
+        }
+        for (int i = 0; i < classCount; i++) {
+            Class cls = classes[i];
+            NSString *name = NSStringFromClass(cls);
+            if (name.length == 0 || !aiClassNameMatchesProbe(name)) continue;
+            NSMutableArray *hits = [NSMutableArray array];
+            aiAppendClassMethods(cls, hits, 12);
+            if (hits.count == 0) continue;
+            [hits sortUsingSelector:@selector(compare:)];
+            [matches addObject:@{@"name": name, @"hits": hits}];
+        }
+        free(classes);
+
+        // 消息/服务类优先，再按名字排序，最多 30 个类
+        [matches sortUsingComparator:^NSComparisonResult(id a, id b) {
+            NSString *an = a[@"name"], *bn = b[@"name"];
+            BOOL aMsg = [an rangeOfString:@"Msg" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+                        [an rangeOfString:@"Message" options:NSCaseInsensitiveSearch].location != NSNotFound;
+            BOOL bMsg = [bn rangeOfString:@"Msg" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+                        [bn rangeOfString:@"Message" options:NSCaseInsensitiveSearch].location != NSNotFound;
+            if (aMsg != bMsg) return aMsg ? NSOrderedAscending : NSOrderedDescending;
+            return [an compare:bn];
+        }];
+        if (matches.count > 30) {
+            matches = [[matches subarrayWithRange:NSMakeRange(0, 30)] mutableCopy];
+        }
+
+        NSMutableArray *lines = [NSMutableArray array];
+        if (matches.count == 0) return @"（没有已加载的消息相关类）";
+        for (NSDictionary *m in matches) {
+            NSString *name = m[@"name"];
+            if (name.length > 60) name = [name substringToIndex:60];
+            NSArray *hits = m[@"hits"];
+            [lines addObject:[NSString stringWithFormat:@"%@: %@",
+                              name, [hits componentsJoinedByString:@" | "]]];
+        }
+        return aiCapString([lines componentsJoinedByString:@"\n"], 2600);
+    } @catch (NSException *e) {
+        return [NSString stringWithFormat:@"类枚举异常: %@", e];
+    }
+}
+
+static BOOL aiIsSQLiteFile(NSString *path) {
+    FILE *f = fopen([path UTF8String], "rb");
+    if (!f) return NO;
+    char buf[16];
+    size_t n = fread(buf, 1, 16, f);
+    fclose(f);
+    return n == 16 && memcmp(buf, "SQLite format 3", 16) == 0;
+}
+
+static NSArray *aiFindDatabaseFiles(void) {
+    NSMutableArray *files = [NSMutableArray array];
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSArray *roots = @[
+        [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support"],
+        [NSHomeDirectory() stringByAppendingPathComponent:@"Documents"]
+    ];
+    for (NSString *root in roots) {
+        if (![fm fileExistsAtPath:root]) continue;
+        NSDirectoryEnumerator *en = [fm enumeratorAtPath:root];
+        int scanned = 0;
+        for (NSString *rel in en) {
+            if (++scanned > 30000) break;
+            NSString *lowerRel = rel.lowercaseString;
+            NSString *ext = lowerRel.pathExtension;
+            BOOL dbLike = [ext isEqualToString:@"sqlite"] || [ext isEqualToString:@"sqlite3"] ||
+                          [ext isEqualToString:@"db"] ||
+                          [lowerRel rangeOfString:@"/db/"].location != NSNotFound ||
+                          [lowerRel rangeOfString:@"/wcdb/"].location != NSNotFound ||
+                          [lowerRel hasPrefix:@"db/"] || [lowerRel hasPrefix:@"wcdb/"];
+            if (!dbLike) continue;
+            NSString *full = [root stringByAppendingPathComponent:rel];
+            NSDictionary *attrs = [fm attributesOfItemAtPath:full error:nil];
+            NSNumber *size = attrs[NSFileSize] ?: @0;
+            [files addObject:@{@"path": full, @"rel": rel, @"size": size}];
+            if (files.count >= 25) break;
+        }
+    }
+    [files sortUsingComparator:^NSComparisonResult(id a, id b) {
+        NSString *ar = a[@"rel"], *br = b[@"rel"];
+        BOOL aMsg = [ar rangeOfString:@"message" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+                    [ar rangeOfString:@"msg" options:NSCaseInsensitiveSearch].location != NSNotFound;
+        BOOL bMsg = [br rangeOfString:@"message" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+                    [br rangeOfString:@"msg" options:NSCaseInsensitiveSearch].location != NSNotFound;
+        if (aMsg != bMsg) return aMsg ? NSOrderedAscending : NSOrderedDescending;
+        return [b[@"size"] compare:a[@"size"]];
+    }];
+    return files;
+}
+
+static NSArray *aiSQLiteTableNames(sqlite3 *db) {
+    NSMutableArray *tables = [NSMutableArray array];
+    sqlite3_stmt *stmt = NULL;
+    const char *sql = "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name";
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) == SQLITE_OK) {
+        while (sqlite3_step(stmt) == SQLITE_ROW) {
+            const unsigned char *t = sqlite3_column_text(stmt, 0);
+            if (t) [tables addObject:[NSString stringWithUTF8String:(const char *)t]];
+        }
+    }
+    sqlite3_finalize(stmt);
+    return tables;
+}
+
+static NSArray *aiSQLiteColumns(sqlite3 *db, NSString *table) {
+    NSMutableArray *cols = [NSMutableArray array];
+    NSString *safe = [table stringByReplacingOccurrencesOfString:@"\"" withString:@"\"\""];
+    NSString *sql = [NSString stringWithFormat:@"PRAGMA table_info(\"%@\")", safe];
+    sqlite3_stmt *stmt = NULL;
+    if (sqlite3_prepare_v2(db, [sql UTF8String], -1, &stmt, NULL) == SQLITE_OK) {
+        while (sqlite3_step(stmt) == SQLITE_ROW) {
+            const unsigned char *c = sqlite3_column_text(stmt, 1);
+            if (c) [cols addObject:[NSString stringWithUTF8String:(const char *)c]];
+        }
+    }
+    sqlite3_finalize(stmt);
+    return cols;
+}
+
+static BOOL aiIsMessageTable(NSString *name) {
+    NSString *lower = name.lowercaseString;
+    if ([lower hasPrefix:@"chat_"]) return YES;
+    if ([lower hasPrefix:@"msg"]) return YES;
+    if ([lower hasPrefix:@"message"]) return YES;
+    if ([lower rangeOfString:@"msg"].location != NSNotFound) return YES;
+    if ([lower rangeOfString:@"message"].location != NSNotFound) return YES;
+    return NO;
+}
+
+static NSString *aiPickColumn(NSArray *cols, NSArray *candidates) {
+    for (NSString *c in candidates) {
+        for (NSString *col in cols) {
+            if ([col isEqualToString:c]) return col;
+        }
+    }
+    for (NSString *c in candidates) {
+        for (NSString *col in cols) {
+            if ([col caseInsensitiveCompare:c] == NSOrderedSame) return col;
+        }
+    }
+    return nil;
+}
+
+static NSString *probeDatabases(void) {
+    @try {
+        NSMutableArray *lines = [NSMutableArray array];
+        NSArray *dbs = aiFindDatabaseFiles();
+        if (dbs.count == 0) return @"（沙盒里没找到 .sqlite/.db 文件）";
+        NSString *home = NSHomeDirectory();
+        for (NSDictionary *d in dbs) {
+            if (lines.count >= 30) break;
+            NSString *rel = d[@"rel"];
+            NSString *full = d[@"path"];
+            NSNumber *size = d[@"size"];
+            NSString *sizeStr = size.longLongValue >= 1024
+                ? [NSString stringWithFormat:@"%.1fKB", size.doubleValue / 1024.0]
+                : [NSString stringWithFormat:@"%lldB", size.longLongValue];
+            NSString *shortPath = [full stringByReplacingOccurrencesOfString:home withString:@"~"];
+            if (!aiIsSQLiteFile(full)) {
+                [lines addObject:[NSString stringWithFormat:@"%@ (%@) 非SQLite", shortPath, sizeStr]];
+                continue;
+            }
+            sqlite3 *db = NULL;
+            int rc = sqlite3_open_v2([full UTF8String], &db,
+                                     SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX, NULL);
+            if (rc != SQLITE_OK) {
+                [lines addObject:[NSString stringWithFormat:@"%@ (%@) 打开失败 rc=%d", shortPath, sizeStr, rc]];
+                if (db) sqlite3_close(db);
+                continue;
+            }
+            sqlite3_busy_timeout(db, 2000);
+            NSMutableArray *sub = [NSMutableArray arrayWithObject:
+                                   [NSString stringWithFormat:@"%@ (%@)", shortPath, sizeStr]];
+            NSArray *tables = aiSQLiteTableNames(db);
+            int shown = 0;
+            for (NSString *tbl in tables) {
+                if (shown >= 25) break;
+                if (!aiIsMessageTable(tbl)) continue;
+                NSArray *cols = aiSQLiteColumns(db, tbl);
+                NSMutableArray *colStr = [NSMutableArray array];
+                for (NSString *c in cols) {
+                    [colStr addObject:c];
+                    if (colStr.count >= 20) break;
+                }
+                [sub addObject:[NSString stringWithFormat:@"  %@: [%@]",
+                                tbl, [colStr componentsJoinedByString:@", "]]];
+                shown++;
+            }
+            [lines addObject:[sub componentsJoinedByString:@"\n"]];
+            sqlite3_close(db);
+        }
+        return aiCapString([lines componentsJoinedByString:@"\n"], 2600);
+    } @catch (NSException *e) {
+        return [NSString stringWithFormat:@"DB 探测异常: %@", e];
+    }
+}
+
+static NSString *probeDeepDiagnostics(void) {
+    NSMutableArray *parts = [NSMutableArray array];
+    [parts addObject:[NSString stringWithFormat:@"【接口】(固定猜测)\n%@",
+                      probeHistoryAPIs()]];
+    [parts addObject:[NSString stringWithFormat:@"【已加载消息相关类+方法】\n%@",
+                      probeLoadedMessageClasses()]];
+    [parts addObject:[NSString stringWithFormat:@"【DB 文件与表结构】\n%@",
+                      probeDatabases()]];
+    return [parts componentsJoinedByString:@"\n\n"];
+}
+
+// ==================== 数据库直读（学习风格用，只查当前会话） ====================
+
+static NSArray<NSString *> *fetchRecentTextsFromDB(NSString *chatId, NSInteger limit) {
+    NSMutableArray *texts = [NSMutableArray array];
+    if (chatId.length == 0 || limit <= 0) return texts;
+    NSString *exactChatTable = [@"Chat_" stringByAppendingString:chatId];
+    NSArray *dbs = aiFindDatabaseFiles();
+    for (NSDictionary *d in dbs) {
+        NSString *full = d[@"path"];
+        if (!aiIsSQLiteFile(full)) continue;
+        sqlite3 *db = NULL;
+        if (sqlite3_open_v2([full UTF8String], &db,
+                            SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX, NULL) != SQLITE_OK) {
+            if (db) sqlite3_close(db);
+            continue;
+        }
+        sqlite3_busy_timeout(db, 2000);
+        NSArray *tables = aiSQLiteTableNames(db);
+        for (NSString *tbl in tables) {
+            if (!aiIsMessageTable(tbl)) continue;
+            BOOL chatSpecific = [tbl isEqualToString:exactChatTable];
+            NSArray *cols = aiSQLiteColumns(db, tbl);
+            NSString *textCol = aiPickColumn(cols, @[@"Des", @"des", @"Content", @"content",
+                                                     @"Text", @"text", @"msgContent", @"MsgContent",
+                                                     @"messageContent", @"MessageContent", @"Message"]);
+            NSString *timeCol = aiPickColumn(cols, @[@"CreateTime", @"createTime", @"Time", @"time",
+                                                     @"timestamp", @"msgCreateTime", @"MsgCreateTime",
+                                                     @"localCreateTime", @"LocalCreateTime"]);
+            NSString *userCol = aiPickColumn(cols, @[@"UserName", @"usrName", @"Username",
+                                                     @"FromUser", @"fromUser", @"FromUsr", @"fromUsr",
+                                                     @"sessionId", @"SessionId", @"chatName", @"ChatName"]);
+            if (!textCol || !timeCol) continue;
+            // 统一消息表必须能按会话过滤；Chat_ 专属表本身就是一个会话
+            if (!chatSpecific && !userCol) continue;
+
+            NSMutableArray *wheres = [NSMutableArray array];
+            if (!chatSpecific && userCol) {
+                [wheres addObject:[NSString stringWithFormat:@"\"%@\" = ?",
+                                   [userCol stringByReplacingOccurrencesOfString:@"\"" withString:@"\"\""]]];
+            }
+            NSString *whereSql = wheres.count
+                ? [NSString stringWithFormat:@" WHERE %@", [wheres componentsJoinedByString:@" AND "]]
+                : @"";
+            NSString *sql = [NSString stringWithFormat:
+                             @"SELECT \"%@\" FROM \"%@\"%@ ORDER BY \"%@\" DESC LIMIT %ld",
+                             [textCol stringByReplacingOccurrencesOfString:@"\"" withString:@"\"\""],
+                             [tbl stringByReplacingOccurrencesOfString:@"\"" withString:@"\"\""],
+                             whereSql,
+                             [timeCol stringByReplacingOccurrencesOfString:@"\"" withString:@"\"\""],
+                             (long)limit];
+            sqlite3_stmt *stmt = NULL;
+            if (sqlite3_prepare_v2(db, [sql UTF8String], -1, &stmt, NULL) == SQLITE_OK) {
+                if (!chatSpecific && userCol) {
+                    sqlite3_bind_text(stmt, 1, [chatId UTF8String], -1, SQLITE_TRANSIENT);
+                }
+                while (sqlite3_step(stmt) == SQLITE_ROW) {
+                    const unsigned char *txt = sqlite3_column_text(stmt, 0);
+                    if (!txt) continue;
+                    NSString *content = [NSString stringWithUTF8String:(const char *)txt];
+                    if (content.length > 0 && ![content hasPrefix:@"<msg"]) {
+                        [texts addObject:content];
+                    }
+                }
+            }
+            sqlite3_finalize(stmt);
+            if (texts.count >= (NSUInteger)limit) break;
+        }
+        sqlite3_close(db);
+        if (texts.count >= (NSUInteger)limit) break;
+    }
+    if (texts.count > (NSUInteger)limit) {
+        [texts removeObjectsInRange:NSMakeRange(0, texts.count - (NSUInteger)limit)];
+    }
+    // 查询是倒序（新的在前），反转成时间正序给 AI
+    return [[texts reverseObjectEnumerator] allObjects];
+}
+
 // 尝试用微信自己的消息接口拉取某个会话最近 N 条文字消息（运行时探测，找不到就返回空）
 static NSArray<NSString *> *fetchRecentTexts(NSString *chatId, NSInteger limit, NSString **diag) {
     NSMutableArray *texts = [NSMutableArray array];
     NSMutableArray *diagParts = [NSMutableArray array];
+    if (chatId.length == 0) {
+        if (diag) *diag = @"chatId 为空";
+        return texts;
+    }
+
+    // 路径 C（优先）：直接读消息数据库，只查当前会话；速度快且不依赖私有接口
+    NSArray *dbTexts = fetchRecentTextsFromDB(chatId, limit);
+    if (dbTexts.count > 0) {
+        [texts addObjectsFromArray:dbTexts];
+        [diagParts addObject:[NSString stringWithFormat:@"C(DB直读)有,拿%lu条",
+                              (unsigned long)dbTexts.count]];
+        if (diag) *diag = [diagParts componentsJoinedByString:@"；"];
+        return texts;
+    }
+    [diagParts addObject:@"C(DB直读)无"];
+
     CMessageMgr *mgr = wechatMessageMgr();
-    if (!mgr || chatId.length == 0) {
-        if (diag) *diag = @"获取 CMessageMgr 失败";
+    if (!mgr) {
+        if (diag) *diag = [diagParts componentsJoinedByString:@"；"];
         return texts;
     }
 
@@ -884,21 +1239,25 @@ static NSMutableArray *g_recentReplyOrder = nil;
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
         NSString *diag = @"";
         NSArray *texts = fetchRecentTexts(chatId, 100, &diag);
+        NSString *deepProbe = @"";
+        if (texts.count < 5) {
+            // 读不到历史才做深度体检（枚举类+方法+数据库表结构），比较重，放后台
+            deepProbe = probeDeepDiagnostics();
+        }
         dispatch_async(dispatch_get_main_queue(), ^{
             if (texts.count < 5) {
-                // 汇总完整诊断：条数 + A/B 接口诊断 + 全类探测，直接复制到剪贴板，
+                // 汇总完整诊断：条数 + 接口诊断 + 深度体检，直接复制到剪贴板，
                 // 用户长按粘贴就能把日志发给作者排查。
-                NSString *probe = probeHistoryAPIs();
                 NSString *fullLog = [NSString stringWithFormat:
                     @"🤖 微信 AI v%@ 学习失败诊断\n"
                     @"会话：%@\n"
                     @"找到文字消息：%lu 条（至少需要 5 条）\n\n"
                     @"接口诊断：%@\n\n"
-                    @"历史接口探测：\n%@",
+                    @"深度体检：\n%@",
                     kAITweakVersion, chatId, (unsigned long)texts.count,
-                    diag.length ? diag : @"未知", probe];
+                    diag.length ? diag : @"未知", deepProbe];
                 [[UIPasteboard generalPasteboard] setString:fullLog];
-                [self presentAlertWithTitle:@"记录太少"
+                [self presentAlertWithTitle:@"记录太少（日志已复制）"
                                     message:[NSString stringWithFormat:
                                         @"最近 100 条文字消息里只找到 %lu 条可用的（至少需要 5 条才能学习）。\n\n完整诊断日志已复制到剪贴板，直接粘贴发作者即可。",
                                         (unsigned long)texts.count]];
