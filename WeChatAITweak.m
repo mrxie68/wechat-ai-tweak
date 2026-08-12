@@ -755,11 +755,7 @@ static UITableViewCell *aiMakeSwitchCell(BOOL on, NSString *chatId) {
     cell.backgroundColor = [UIColor whiteColor];
     cell.contentView.backgroundColor = [UIColor whiteColor];
     UISwitch *switchView = [[UISwitch alloc] initWithFrame:CGRectZero];
-    // 类别总开关没开时：开关置灰不可用，避免“拨了没反应”
-    BOOL isGroup = [chatId containsString:@"@chatroom"];
-    BOOL masterOn = isGroup ? [AISettings groupChatEnabled] : [AISettings singleChatEnabled];
-    switchView.on = on && masterOn;
-    switchView.enabled = masterOn;
+    switchView.on = on;
     objc_setAssociatedObject(switchView, &kAISwitchChatKey, chatId, OBJC_ASSOCIATION_COPY_NONATOMIC);
     [switchView addTarget:[WeChatAIHandler class]
                    action:@selector(aiSwitchChanged:)
@@ -854,16 +850,6 @@ static void swz_mm_didSelect(id self, SEL _cmd, UITableView *tableView, NSIndexP
         NSInteger insertRow = [config[@"row"] integerValue];
         if (indexPath.row == insertRow) {
             NSString *chatId = config[@"chat"];
-            BOOL isGroup = [config[@"group"] boolValue];
-            // 类别总开关没开：提示先去设置页打开，不切换
-            if (isGroup ? ![AISettings groupChatEnabled] : ![AISettings singleChatEnabled]) {
-                [WeChatAIHandler presentAlertWithTitle:@"总开关未打开"
-                                               message:isGroup
-                    ? @"群聊 AI 助手总开关是关的。请先在设置页打开“群聊 AI 助手”，再单独控制每个群。"
-                    : @"单聊 AI 助手总开关是关的。请先在设置页打开“单聊 AI 助手”，再单独控制每个好友。"];
-                [tableView deselectRowAtIndexPath:indexPath animated:YES];
-                return;
-            }
             BOOL nowOn = [AISettings chatEnabled:chatId];
             [AISettings setChatEnabled:!nowOn chatId:chatId];
             [tableView reloadData];
