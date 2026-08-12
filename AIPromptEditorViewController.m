@@ -27,7 +27,7 @@
                                                             action:@selector(saveTapped)];
     self.navigationItem.rightBarButtonItem = save;
 
-    self.textView = [[UITextView alloc] initWithFrame:CGRectZero];
+    self.textView = [[UITextView alloc] initWithFrame:CGRectMake(0, 0, 0, 0)];
     self.textView.font = [UIFont systemFontOfSize:16];
     self.textView.text = [AISettings autoSystemPrompt];
     self.textView.keyboardDismissMode = UIScrollViewKeyboardDismissModeInteractive;
