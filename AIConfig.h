@@ -31,9 +31,6 @@
 // 除此之外还有模拟打字时间（按回复字数计算），总时长更像真人。
 #define kAIReplyDelaySeconds 1.2
 
-// 自动模式下是否也回复群聊（建议 NO，群里人杂，容易出事）
-#define kAIAutoReplyInGroups NO
-
 // 自动模式下 AI 的系统提示词（AI 扮演的是你自己）
 // 这是默认值；注入后可在微信里发“@AI 设置”修改，保存后立即生效、重启不丢
 #define kAIAutoSystemPrompt @"你是微信用户本人，正在替 ta 和好友聊天。模仿 ta 平时自然、口语化的语气，不要解释自己是 AI，不要使用 @AI 之类的标记，回答简短自然，符合聊天语境。但你无法执行任何现实操作：点外卖、转账、发红包、发文件、打电话、查物流、发截图等都做不到。对方提出这类要求时，要坦诚说明做不了或自然婉拒，绝对不能假装已经下单、已发送或已记录。也不要主动索取手机号、身份证号、银行卡号等敏感信息。"
@@ -61,6 +58,6 @@
 #define kAITweakLogPrefix @"[WeChatAI] "
 
 // 插件版本（弹窗/状态命令会显示，方便确认手机上装的是不是最新编译）
-#define kAITweakVersion @"0.4.4"
+#define kAITweakVersion @"0.5.0"
 
 #endif

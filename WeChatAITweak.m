@@ -244,14 +244,6 @@ static void *kAISwitchChatKey = &kAISwitchChatKey;  // 开关 -> chatId
 
         BOOL autoMode = isAutoMode();
 
-        // 自动模式下，群聊默认仍走 @AI 触发，避免误回复
-        if (autoMode && isGroup && !kAIAutoReplyInGroups) {
-            if ([content hasPrefix:kAITrigger]) {
-                [self handleTriggerMessage:content chatId:chatId];
-            }
-            return;
-        }
-
         // trigger 模式：只响应 @AI 开头的消息
         if (!autoMode) {
             if ([content hasPrefix:kAITrigger]) {
@@ -466,8 +458,15 @@ static void *kAISwitchChatKey = &kAISwitchChatKey;  // 开关 -> chatId
 
 // 自己手动发送的命令：@AI 设置 / @AI 清空
 + (NSString *)commandFromContent:(NSString *)content {
-    if (![content hasPrefix:kAITrigger]) return nil;
-    NSString *question = [content substringFromIndex:kAITrigger.length];
+    // 兼容两种写法：@AI 设置 / AI 设置
+    NSString *question = nil;
+    if ([content hasPrefix:@"@AI"]) {
+        question = [content substringFromIndex:3];
+    } else if ([content hasPrefix:@"AI "]) {
+        question = [content substringFromIndex:3];
+    } else {
+        return nil;
+    }
     question = [question stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
     if ([question isEqualToString:@"设置"] || [question isEqualToString:@"settings"]) return @"settings";
     if ([question isEqualToString:@"清空"] || [question isEqualToString:@"reset"]) return @"clear";
