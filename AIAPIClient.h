@@ -9,6 +9,7 @@
          systemPrompt:(NSString *)systemPrompt
          styleProfile:(NSString *)styleProfile
          userProfile:(NSString *)userProfile
+         fewShotEnabled:(BOOL)fewShotEnabled
           completion:(void (^)(NSString *reply, NSError *error))completion;
 
 @end

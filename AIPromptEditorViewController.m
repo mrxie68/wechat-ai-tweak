@@ -220,7 +220,7 @@ static UITextField *makeRowField(NSString *placeholder) {
     self.styleView.keyboardDismissMode = UIScrollViewKeyboardDismissModeInteractive;
     [self.styleCard addSubview:self.styleView];
     self.styleHint = [[UILabel alloc] initWithFrame:CGRectZero];
-    self.styleHint.text = @"粘贴你自己的聊天记录片段，AI 会模仿这个语气和习惯；留空则用默认风格";
+    self.styleHint.text = @"格式：Q:（对方说）/ A:（我说）交替，每行一条；AI 会作为真实对话范例学习。留空则用默认样本";
     self.styleHint.font = [UIFont systemFontOfSize:12];
     self.styleHint.textColor = [UIColor secondaryLabelColor];
     [self.styleCard addSubview:self.styleHint];

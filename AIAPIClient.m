@@ -13,10 +13,40 @@
     return instance;
 }
 
+// 解析 Q:/A: 格式的聊天风格样本为 Few-Shot 消息对（最多 maxPairs 组）。
+// 容错：跳过空行和未知前缀行；支持全角冒号“Q：”；内容首尾空白会被清理。
+static NSArray<NSDictionary *> *aiParseFewShotSamples(NSString *samples, NSUInteger maxPairs) {
+    NSMutableArray *msgs = [NSMutableArray array];
+    if (samples.length == 0) return msgs;
+    NSUInteger cap = maxPairs * 2;
+    NSArray *lines = [samples componentsSeparatedByCharactersInSet:
+                      [NSCharacterSet newlineCharacterSet]];
+    for (NSString *raw in lines) {
+        if (msgs.count >= cap) break;
+        NSString *line = [raw stringByTrimmingCharactersInSet:
+                          [NSCharacterSet whitespaceAndNewlineCharacterSet]];
+        if (line.length < 2) continue;
+        unichar c0 = [line characterAtIndex:0];
+        unichar c1 = [line characterAtIndex:1];
+        if (c1 != ':' && c1 != '：') continue;
+        NSString *role = nil;
+        if (c0 == 'Q' || c0 == 'q') role = @"user";
+        else if (c0 == 'A' || c0 == 'a') role = @"assistant";
+        else continue;
+        NSString *content = [[line substringFromIndex:2]
+                             stringByTrimmingCharactersInSet:
+                             [NSCharacterSet whitespaceAndNewlineCharacterSet]];
+        if (content.length == 0) continue;
+        [msgs addObject:@{@"role": role, @"content": content}];
+    }
+    return msgs;
+}
+
 - (void)sendMessages:(NSArray<NSDictionary *> *)messages
          systemPrompt:(NSString *)systemPrompt
          styleProfile:(NSString *)styleProfile
          userProfile:(NSString *)userProfile
+         fewShotEnabled:(BOOL)fewShotEnabled
           completion:(void (^)(NSString *, NSError *))completion {
 
     NSURL *url = [NSURL URLWithString:[kAIBaseURL stringByAppendingString:@"/chat/completions"]];
@@ -29,10 +59,15 @@
     // 系统提示词 + 会话历史
     NSMutableArray *payload = [NSMutableArray array];
     NSString *finalPrompt = systemPrompt;
-    NSString *samples = [AISettings styleSamples];
+    NSArray *fewShot = @[];
+    NSString *samples = fewShotEnabled ? [AISettings styleSamples] : @"";
     if (samples.length > 0) {
-        finalPrompt = [finalPrompt stringByAppendingFormat:
-            @"\n\n【你的真实聊天风格样本，请模仿这里的语气、用词和习惯来回复】\n%@", samples];
+        fewShot = aiParseFewShotSamples(samples, 4);
+        // 解析不出 Q:/A: 时退回纯文本注入，兼容以前粘贴的自由格式样本
+        if (fewShot.count == 0) {
+            finalPrompt = [finalPrompt stringByAppendingFormat:
+                @"\n\n【你的真实聊天风格样本，请模仿这里的语气、用词和习惯来回复】\n%@", samples];
+        }
     }
     if (styleProfile.length > 0) {
         finalPrompt = [finalPrompt stringByAppendingFormat:
@@ -44,6 +79,10 @@
     }
     if (finalPrompt.length > 0) {
         [payload addObject:@{@"role": @"system", @"content": finalPrompt}];
+    }
+    // 顺序：system → Few-Shot 范例 → 真实聊天上下文
+    if (fewShot.count > 0) {
+        [payload addObjectsFromArray:fewShot];
     }
     [payload addObjectsFromArray:messages];
 

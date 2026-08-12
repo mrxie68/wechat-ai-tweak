@@ -798,6 +798,7 @@ static NSMutableArray *g_recentReplyOrder = nil;
                               systemPrompt:kAISystemPrompt
                               styleProfile:[AISettings styleProfileForChat:chatId]
                               userProfile:[AISettings userProfile]
+                              fewShotEnabled:YES
                                 completion:^(NSString *reply, NSError *error) {
             @synchronized (self) {
                 [g_inFlightChats removeObject:chatId];
@@ -873,6 +874,7 @@ static NSMutableArray *g_recentReplyOrder = nil;
                               systemPrompt:[AISettings autoSystemPrompt]
                               styleProfile:[AISettings styleProfileForChat:chatId]
                               userProfile:[AISettings userProfile]
+                              fewShotEnabled:YES
                                 completion:^(NSString *reply, NSError *error) {
             @synchronized (self) {
                 [g_inFlightChats removeObject:chatId];
@@ -1204,6 +1206,7 @@ static NSMutableArray *g_recentReplyOrder = nil;
                                   systemPrompt:learnPrompt
                                   styleProfile:nil
                                   userProfile:nil
+                                  fewShotEnabled:NO
                                     completion:^(NSString *reply, NSError *error) {
             if (error) {
                 NSLog(kAITweakLogPrefix "学习风格失败: %@", error);
