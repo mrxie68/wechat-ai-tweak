@@ -143,8 +143,9 @@ static NSString * const kAISettingsGroupChatKey = @"WeChatAIGroupChatEnabled";
 
 + (BOOL)chatEnabled:(NSString *)chatId {
     BOOL isGroup = [chatId containsString:@"@chatroom"];
-    BOOL defaultEnabled = isGroup ? [self groupChatEnabled] : [self singleChatEnabled];
-    return [self chatEnabled:chatId defaultEnabled:defaultEnabled];
+    // 类别总开关优先：单聊/群聊总开关关掉 → 这类会话全部硬关闭，单独设置也不生效
+    if (isGroup ? ![self groupChatEnabled] : ![self singleChatEnabled]) return NO;
+    return [self chatEnabled:chatId defaultEnabled:YES];
 }
 
 + (BOOL)singleChatEnabled {
