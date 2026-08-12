@@ -620,6 +620,7 @@ static void (*orig_AsyncOnAddMsg)(id, SEL, id, CMessageWrap *);
 static void (*orig_MainThreadNotifyToExt)(id, SEL, NSDictionary *);
 static void (*orig_SendTextMessage)(id, SEL, NSString *, NSString *);
 static void (*orig_pushViewController)(id, SEL, UIViewController *, BOOL);
+static void (*orig_presentViewController)(id, SEL, UIViewController *, BOOL, void (^)(void));
 
 static void swz_AsyncOnAddMsg(id self, SEL _cmd, id arg1, CMessageWrap *wrap) {
     if (orig_AsyncOnAddMsg) {
@@ -666,6 +667,17 @@ static void swz_SendTextMessage(id self, SEL _cmd, NSString *content, NSString *
 static void swz_pushViewController(id self, SEL _cmd, UIViewController *viewController, BOOL animated) {
     if (orig_pushViewController) {
         orig_pushViewController(self, _cmd, viewController, animated);
+    }
+    @try {
+        [AIDiagnostics inspectViewController:viewController];
+    } @catch (NSException *exception) {
+        NSLog(kAITweakLogPrefix "界面诊断异常: %@", exception);
+    }
+}
+
+static void swz_presentViewController(id self, SEL _cmd, UIViewController *viewController, BOOL animated, void (^completion)(void)) {
+    if (orig_presentViewController) {
+        orig_presentViewController(self, _cmd, viewController, animated, completion);
     }
     @try {
         [AIDiagnostics inspectViewController:viewController];
@@ -742,6 +754,15 @@ static int installHooks(void) {
         method_setImplementation(pushMethod, (IMP)swz_pushViewController);
         NSLog(kAITweakLogPrefix "hook 安装成功: UINavigationController pushViewController:animated:");
     }
+
+    // 兜底：有些页面可能是 present 出来的
+    Method presentMethod = class_getInstanceMethod([UIViewController class],
+                                                   @selector(presentViewController:animated:completion:));
+    if (presentMethod) {
+        orig_presentViewController = (void *)method_getImplementation(presentMethod);
+        method_setImplementation(presentMethod, (IMP)swz_presentViewController);
+        NSLog(kAITweakLogPrefix "hook 安装成功: UIViewController presentViewController");
+    }
     return 1;
 }
 
@@ -784,13 +805,34 @@ static void WeChatAIInit(void) {
 + (void)inspectViewController:(UIViewController *)viewController {
     if (!viewController) return;
 
+    // 立即查一次；标题往往是页面加载后才设置的，0.6 秒后再查一次
+    [self inspectOnce:viewController];
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.6 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        [self inspectOnce:viewController];
+    });
+}
+
++ (BOOL)looksLikeChatInfoPage:(NSString *)className title:(NSString *)title {
+    if ([className containsString:@"ChatInfo"]
+        || [className containsString:@"ChatDetail"]
+        || [className containsString:@"ChatSetting"]
+        || [className containsString:@"ChatRoomInfo"]
+        || [className containsString:@"SessionDetail"]) {
+        return YES;
+    }
+    if ([title containsString:@"聊天信息"]
+        || [title containsString:@"聊天详情"]
+        || [title containsString:@"群聊信息"]) {
+        return YES;
+    }
+    return NO;
+}
+
++ (void)inspectOnce:(UIViewController *)viewController {
     NSString *className = NSStringFromClass([viewController class]);
-    NSString *title = viewController.title;
-    BOOL looksLikeChatInfo = [className containsString:@"ChatInfo"]
-                          || [className containsString:@"ChatDetail"]
-                          || [title isEqualToString:@"聊天信息"]
-                          || [title isEqualToString:@"聊天详情"];
-    if (!looksLikeChatInfo) return;
+    NSString *title = viewController.title ?: viewController.navigationItem.title ?: @"";
+    if (![self looksLikeChatInfoPage:className title:title]) return;
 
     // 每个类只提示一次，避免每次打开都弹
     NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
@@ -798,7 +840,7 @@ static void WeChatAIInit(void) {
     if ([defaults boolForKey:flagKey]) return;
     [defaults setBool:YES forKey:flagKey];
 
-    NSString *detail = [NSString stringWithFormat:@"类名：%@\n标题：%@", className, title ?: @"(空)"];
+    NSString *detail = [NSString stringWithFormat:@"类名：%@\n标题：%@", className, title.length ? title : @"(空)"];
     if ([className isEqualToString:@"ChatRoomInfoViewController"]) {
         Ivar ivar = class_getInstanceVariable([viewController class], "m_tableViewInfo");
         detail = [detail stringByAppendingFormat:@"\nivar m_tableViewInfo：%@", ivar ? @"有" : @"无"];
