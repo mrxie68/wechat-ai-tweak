@@ -23,6 +23,7 @@
 @property (nonatomic, strong) UIView *groupChatCard;
 @property (nonatomic, strong) UILabel *groupChatLabel;
 @property (nonatomic, strong) UISwitch *groupChatSwitch;
+@property (nonatomic, strong) UILabel *categoryHint;
 @property (nonatomic, strong) UIView *modeCard;
 @property (nonatomic, strong) UILabel *modeLabel;
 @property (nonatomic, strong) UILabel *modeValueLabel;
@@ -158,6 +159,14 @@ static UITextField *makeRowField(NSString *placeholder) {
     self.groupChatSwitch = [[UISwitch alloc] initWithFrame:CGRectZero];
     self.groupChatSwitch.on = [AISettings groupChatEnabled];
     [self.groupChatCard addSubview:self.groupChatSwitch];
+
+    // 类别开关说明：避免误解“关了还在回”
+    self.categoryHint = [[UILabel alloc] initWithFrame:CGRectZero];
+    self.categoryHint.text = @"提示：上面两个开关只改这一类会话的默认状态；在聊天信息页单独开/关过的会话不受影响。默认单聊、群聊都是关闭的；想一键全部停用，请关掉“机器人开关”。";
+    self.categoryHint.font = [UIFont systemFontOfSize:12];
+    self.categoryHint.textColor = [UIColor secondaryLabelColor];
+    self.categoryHint.numberOfLines = 0;
+    [self.contentView addSubview:self.categoryHint];
 
     // 回复模式
     self.modeCard = makeCard();
@@ -297,6 +306,8 @@ static UITextField *makeRowField(NSString *placeholder) {
     y += rowHeight + gap;
     self.groupChatCard.frame = CGRectMake(margin, y, cardWidth, rowHeight);
     y += rowHeight + gap;
+    self.categoryHint.frame = CGRectMake(margin + 4, y, cardWidth - 8, 52);
+    y += 52 + 8;
     self.modeCard.frame = CGRectMake(margin, y, cardWidth, rowHeight);
     y += rowHeight + gap;
     self.keyCard.frame = CGRectMake(margin, y, cardWidth, rowHeight);

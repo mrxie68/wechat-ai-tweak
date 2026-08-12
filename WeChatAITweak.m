@@ -706,12 +706,15 @@ static NSDictionary *aiBuildConfigForVC(UIViewController *vc, UITableView *table
 }
 
 static BOOL g_buildingConfig = NO;
+static void *kAIScanDoneKey = &kAIScanDoneKey;  // 已扫描过但非聊天信息页的表格，避免反复走响应链
 
 // 取表格配置；没有就懒加载：沿响应链找到页面 VC 并挂上（不依赖 reloadTableData 时机）
 static NSDictionary *aiConfigForTable(UITableView *tableView) {
     NSDictionary *config = objc_getAssociatedObject(tableView, &kAIConfigKey);
     if (config) return config;
     if (g_buildingConfig) return nil; // 防止扫描时递归
+    // 已确认不是聊天信息页的表格：直接返回，不让微信所有列表都被拖慢
+    if (objc_getAssociatedObject(tableView, &kAIScanDoneKey)) return nil;
 
     g_buildingConfig = YES;
     @try {
@@ -730,6 +733,8 @@ static NSDictionary *aiConfigForTable(UITableView *tableView) {
                 break;
             }
         }
+        // 无论是否匹配都标记已扫描，避免对每张表格反复走响应链
+        objc_setAssociatedObject(tableView, &kAIScanDoneKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     } @catch (NSException *exception) {
         config = nil;
     }
@@ -961,7 +966,7 @@ static int installHooks(void) {
             UIViewController *top = tweakTopViewController();
             if (!top) return;
             UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"微信 AI 助手已加载"
-                message:[NSString stringWithFormat:@"v%@ 已加载\n设置入口：我的 → 插件页面 → 微信 AI 助手\n（聊天信息页的“AI 助手”行可开关/清空记忆）", kAITweakVersion]
+                message:[NSString stringWithFormat:@"v%@ 已加载\n默认单聊、群聊 AI 均为关闭，需在设置页打开一键开关，或在聊天信息页单独打开。\n设置入口：我的 → 插件页面 → 微信 AI 助手", kAITweakVersion]
                 preferredStyle:UIAlertControllerStyleAlert];
             [alert addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
             [top presentViewController:alert animated:YES completion:nil];
