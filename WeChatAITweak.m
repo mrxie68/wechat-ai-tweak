@@ -1529,11 +1529,20 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
 
         // 阶段 2：让 AI 总结风格
         updateProgress(@"记录读取完成，正在让 AI 总结你的说话风格…");
-        NSString *joined = [texts componentsJoinedByString:@"\n"];
+        // 语料瘦身：单条截断到 80 字、总量上限 2500 字，避免大语料拖慢 API（总结风格用不到全文）
+        NSMutableArray *shortTexts = [NSMutableArray array];
+        for (NSString *t in texts) {
+            NSString *s = t;
+            if (s.length > 80) s = [s substringToIndex:80];
+            [shortTexts addObject:s];
+        }
+        NSString *joined = [shortTexts componentsJoinedByString:@"\n"];
+        if (joined.length > 2500) joined = [joined substringToIndex:2500];
         NSString *learnPrompt = @"你是一名聊天风格分析师。以下是某微信用户与其好友最近的聊天记录：带“我：”前缀的是用户本人发的，带“对方：”前缀的是对方发的（若没有前缀，说明数据库未提供发送方信息，请结合语境综合判断）。请总结这位“用户本人”的说话风格：语气、常用词/口头禅、句子长短、是否爱用表情和标点、回复习惯、惯用开场或结束语。用 150~250 字的中文直接输出总结，不要客套，不要写“分析如下”之类的开头。";
         NSArray *messages = @[@{@"role": @"user", @"content": joined}];
 
-            [[AIAPIClient shared] sendMessages:messages
+        NSTimeInterval startTs = CFAbsoluteTimeGetCurrent();
+        [[AIAPIClient shared] sendMessages:messages
                                   systemPrompt:learnPrompt
                                   styleProfile:nil
                                   userProfile:nil
@@ -1541,11 +1550,13 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
                                   fewShotEnabled:NO
                                     completion:^(NSString *reply, NSError *error) {
             if (error) {
-                NSLog(kAITweakLogPrefix "学习风格失败: %@", error);
+                NSLog(kAITweakLogPrefix "学习风格失败(%.1f秒): %@",
+                      CFAbsoluteTimeGetCurrent() - startTs, error);
                 finishLearning(@"学习失败",
                                @"调用 DeepSeek 失败（网络异常、API Key 错误或余额不足），请稍后重试。");
                 return;
             }
+            NSLog(kAITweakLogPrefix "学习风格完成，API 耗时 %.1f 秒", CFAbsoluteTimeGetCurrent() - startTs);
             NSString *profile = [reply stringByTrimmingCharactersInSet:
                                  [NSCharacterSet whitespaceAndNewlineCharacterSet]];
             [AISettings setStyleProfile:profile forChat:chatId];
