@@ -1488,6 +1488,8 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
     [AISettings setCurrentAccount:[self selfUsrName]];
 
     __block UIAlertController *progressAlert = nil;
+    __block BOOL learningCanceled = NO;
+    __block NSTimer *elapsedTimer = nil;
 
     // 显示/更新“学习中”进度弹窗（带转圈）
     void (^updateProgress)(NSString *) = ^(NSString *stage) {
@@ -1507,6 +1509,16 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
                 [spinner.centerXAnchor constraintEqualToAnchor:progressAlert.view.centerXAnchor].active = YES;
                 [spinner.bottomAnchor constraintEqualToAnchor:progressAlert.view.bottomAnchor
                                                      constant:-18].active = YES;
+                // 取消学习：立即关弹窗、停计时、忽略后续结果
+                [progressAlert addAction:[UIAlertAction actionWithTitle:@"取消学习"
+                                                                  style:UIAlertActionStyleCancel
+                                                                handler:^(UIAlertAction *a) {
+                    learningCanceled = YES;
+                    [elapsedTimer invalidate];
+                    elapsedTimer = nil;
+                    [progressAlert dismissViewControllerAnimated:YES completion:nil];
+                    progressAlert = nil;
+                }]];
                 [top presentViewController:progressAlert animated:NO completion:nil];
             } else {
                 progressAlert.message = [stage stringByAppendingString:@"\n\n"];
@@ -1628,10 +1640,9 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
         // 请求发出后的实时计时：用 NSTimer（主线程、完成时 invalidate），
         // 避免弱引用自递归 block 在作用域结束后被释放导致 dispatch_after 传 NULL 闪退
         __block NSInteger elapsedSec = 0;
-        __block NSTimer *elapsedTimer = nil;
         NSLog(kAITweakLogPrefix "学习请求已发出，等待 AI 总结…");
         dispatch_async(dispatch_get_main_queue(), ^{
-            if (progressAlert) {
+            if (progressAlert && !learningCanceled) {
                 __weak UIAlertController *weakAlert = progressAlert;
                 elapsedTimer = [NSTimer scheduledTimerWithTimeInterval:1.0
                                                                 repeats:YES
@@ -1652,6 +1663,7 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
                friendInfo:nil
                fewShotEnabled:NO
                  completion:^(NSString *reply, NSError *error) {
+            if (learningCanceled) return; // 已取消：忽略结果
             dispatch_async(dispatch_get_main_queue(), ^{
                 [elapsedTimer invalidate]; // 停止计时
                 elapsedTimer = nil;
