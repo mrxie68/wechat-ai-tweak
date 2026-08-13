@@ -20,6 +20,9 @@
 +(NSArray<NSDictionary *> *)allStyleProfiles;  // 全部学习档案 [{chatId, profile}]，按 chatId 排序
 +(NSDictionary *)friendInfoForChat:(NSString *)chatId;  // 对方信息 {relation, favor, note}
 +(void)setFriendInfo:(NSDictionary *)info forChat:(NSString *)chatId;
++(NSString *)writeBackupToFile;       // 备份全部 WeChatAI 配置到沙盒 Documents，成功返回路径
++(NSString *)latestBackupPath;        // 最近的备份文件路径（没有则 nil）
++(BOOL)restoreFromFile:(NSString *)path;  // 从备份文件整体恢复（覆盖当前配置）
 + (NSString *)apiKey;                  // 同理
 + (void)setApiKey:(NSString *)key;
 + (NSString *)model;

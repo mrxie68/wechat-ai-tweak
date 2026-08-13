@@ -68,6 +68,12 @@
 @property (nonatomic, strong) UITextView *profileView;
 @property (nonatomic, strong) UILabel *profileHint;
 @property (nonatomic, strong) UIButton *profileResetButton;
+@property (nonatomic, strong) UIView *backupCard;
+@property (nonatomic, strong) UILabel *backupLabel;
+@property (nonatomic, strong) UILabel *backupValueLabel;
+@property (nonatomic, strong) UIView *restoreCard;
+@property (nonatomic, strong) UILabel *restoreLabel;
+@property (nonatomic, strong) UILabel *restoreValueLabel;
 @property (nonatomic, strong) UIView *memoryCard;
 @property (nonatomic, strong) UILabel *memoryLabel;
 @property (nonatomic, strong) UILabel *memoryValueLabel;
@@ -360,6 +366,29 @@ static UITextField *makeRowField(NSString *placeholder) {
                       forControlEvents:UIControlEventTouchUpInside];
     [self.profileCard addSubview:self.profileResetButton];
 
+    // 数据备份 / 恢复
+    self.backupCard = makeCard();
+    [self.contentView addSubview:self.backupCard];
+    self.backupLabel = makeRowLabel(@"备份数据");
+    [self.backupCard addSubview:self.backupLabel];
+    self.backupValueLabel = makeValueLabel();
+    self.backupValueLabel.text = @"›";
+    [self.backupCard addSubview:self.backupValueLabel];
+    self.backupCard.userInteractionEnabled = YES;
+    [self.backupCard addGestureRecognizer:[[UITapGestureRecognizer alloc]
+                                           initWithTarget:self action:@selector(backupTapped)]];
+
+    self.restoreCard = makeCard();
+    [self.contentView addSubview:self.restoreCard];
+    self.restoreLabel = makeRowLabel(@"恢复数据");
+    [self.restoreCard addSubview:self.restoreLabel];
+    self.restoreValueLabel = makeValueLabel();
+    self.restoreValueLabel.text = @"›";
+    [self.restoreCard addSubview:self.restoreValueLabel];
+    self.restoreCard.userInteractionEnabled = YES;
+    [self.restoreCard addGestureRecognizer:[[UITapGestureRecognizer alloc]
+                                            initWithTarget:self action:@selector(restoreTapped)]];
+
     // 清空记忆（总开关：清掉所有会话的上下文）
     self.memoryCard = makeCard();
     [self.contentView addSubview:self.memoryCard];
@@ -437,6 +466,11 @@ static UITextField *makeRowField(NSString *placeholder) {
     self.profileCard.frame = CGRectMake(margin, y, cardWidth, textCardHeight);
     y += textCardHeight + 12;
 
+    self.backupCard.frame = CGRectMake(margin, y, cardWidth, rowHeight);
+    y += rowHeight + gap;
+    self.restoreCard.frame = CGRectMake(margin, y, cardWidth, rowHeight);
+    y += rowHeight + gap;
+
     self.memoryCard.frame = CGRectMake(margin, y, cardWidth, rowHeight);
     y += rowHeight + 12;
     self.resetButton.frame = CGRectMake(margin, y, cardWidth, 48);
@@ -496,6 +530,11 @@ static UITextField *makeRowField(NSString *placeholder) {
     self.profileView.frame = CGRectMake(12, 38, cardWidth - 24, textCardHeight - 38 - 26);
     self.profileHint.frame = CGRectMake(16, textCardHeight - 22, cardWidth - 32, 16);
     self.profileResetButton.frame = CGRectMake(cardWidth - 92, 6, 76, 26);
+
+    self.backupLabel.frame = CGRectMake(16, 0, 200, rowHeight);
+    self.backupValueLabel.frame = CGRectMake(cardWidth - 50, 0, 30, rowHeight);
+    self.restoreLabel.frame = CGRectMake(16, 0, 200, rowHeight);
+    self.restoreValueLabel.frame = CGRectMake(cardWidth - 50, 0, 30, rowHeight);
 
     self.memoryLabel.frame = CGRectMake(16, 0, 200, rowHeight);
     self.memoryValueLabel.frame = CGRectMake(cardWidth - 50, 0, 30, rowHeight);
@@ -818,6 +857,64 @@ static UITextField *makeRowField(NSString *placeholder) {
 
 - (void)resetProfileTapped {
     self.profileView.text = kAIUserProfile;
+}
+
+- (void)backupTapped {
+    NSString *path = [AISettings writeBackupToFile];
+    if (!path) {
+        UIAlertController *fail = [UIAlertController alertControllerWithTitle:@"❌ 备份失败"
+                                                                     message:@"写入备份文件出错，请稍后重试。"
+                                                              preferredStyle:UIAlertControllerStyleAlert];
+        [fail addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
+        [self presentViewController:fail animated:YES completion:nil];
+        return;
+    }
+    NSString *json = [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:nil];
+    if (json.length > 0) {
+        [[UIPasteboard generalPasteboard] setString:json];
+    }
+    UIAlertController *ok = [UIAlertController alertControllerWithTitle:@"✅ 备份成功"
+                                                                message:[NSString stringWithFormat:
+                                                                         @"备份路径：\n%@\n\n备份内容已复制到剪贴板，可粘贴到微信文件助手或备忘录里另存。\n\n注意：备份包含 API Key，请妥善保管。",
+                                                                         path]
+                                                         preferredStyle:UIAlertControllerStyleAlert];
+    [ok addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
+    [self presentViewController:ok animated:YES completion:nil];
+}
+
+- (void)restoreTapped {
+    NSString *path = [AISettings latestBackupPath];
+    if (!path) {
+        UIAlertController *warn = [UIAlertController alertControllerWithTitle:@"没有找到备份"
+                                                                     message:@"沙盒里没有 WeChatAI_Backup_*.json 备份文件。\n备份内容也会复制到剪贴板，可以粘贴到别处保存，需要时再放回。"
+                                                              preferredStyle:UIAlertControllerStyleAlert];
+        [warn addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
+        [self presentViewController:warn animated:YES completion:nil];
+        return;
+    }
+    UIAlertController *confirm = [UIAlertController alertControllerWithTitle:@"恢复数据"
+                                                                    message:[NSString stringWithFormat:
+                                                                             @"将从以下备份恢复（会覆盖当前所有配置、风格档案、对方信息和激活状态）：\n\n%@",
+                                                                             path]
+                                                             preferredStyle:UIAlertControllerStyleAlert];
+    [confirm addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+    [confirm addAction:[UIAlertAction actionWithTitle:@"恢复"
+                                                style:UIAlertActionStyleDestructive
+                                              handler:^(UIAlertAction *action) {
+        BOOL ok = [AISettings restoreFromFile:path];
+        UIAlertController *result = [UIAlertController alertControllerWithTitle:ok ? @"✅ 恢复成功" : @"❌ 恢复失败"
+                                                                        message:ok
+            ? @"配置已恢复。设置页已关闭，重新打开即可看到恢复后的数据。"
+            : @"备份文件无法解析，恢复失败。"
+                                                                 preferredStyle:UIAlertControllerStyleAlert];
+        [result addAction:[UIAlertAction actionWithTitle:@"知道了"
+                                                   style:UIAlertActionStyleDefault
+                                                 handler:^(UIAlertAction *a) {
+            if (ok) [self dismissOrPop];
+        }]];
+        [self presentViewController:result animated:YES completion:nil];
+    }]];
+    [self presentViewController:confirm animated:YES completion:nil];
 }
 
 - (void)viewWillAppear:(BOOL)animated {

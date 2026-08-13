@@ -262,6 +262,88 @@ static NSString *g_currentAccount = nil;
     [defaults synchronize];
 }
 
++(NSDictionary *)backupData {
+    NSMutableDictionary *data = [NSMutableDictionary dictionary];
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    NSDictionary *all = [defaults dictionaryRepresentation];
+    for (NSString *key in all) {
+        if ([key hasPrefix:@"WeChatAI"]) {
+            data[key] = all[key]; // plist 类型，JSON 可序列化
+        }
+    }
+    // 当前账号的 API Key（Keychain）一并备份，方便整体还原
+    NSString *key = [self apiKey];
+    if (key.length > 0 && ![key isEqualToString:kAIAPIKey]) {
+        data[@"__apiKey"] = key;
+    }
+    return @{
+        @"app": @"wechat-ai-tweak",
+        @"version": kAITweakVersion,
+        @"date": @([[NSDate date] timeIntervalSince1970]),
+        @"data": data,
+    };
+}
+
++(NSString *)writeBackupToFile {
+    NSDictionary *backup = [self backupData];
+    NSError *err = nil;
+    NSData *json = [NSJSONSerialization dataWithJSONObject:backup
+                                                   options:NSJSONWritingPrettyPrinted
+                                                     error:&err];
+    if (!json) return nil;
+    NSDateFormatter *fmt = [[NSDateFormatter alloc] init];
+    fmt.dateFormat = @"yyyyMMdd_HHmmss";
+    NSString *name = [NSString stringWithFormat:@"WeChatAI_Backup_%@.json",
+                      [fmt stringFromDate:[NSDate date]]];
+    NSString *path = [[NSHomeDirectory() stringByAppendingPathComponent:@"Documents"]
+                      stringByAppendingPathComponent:name];
+    BOOL ok = [json writeToFile:path atomically:YES];
+    return ok ? path : nil;
+}
+
++(NSString *)latestBackupPath {
+    NSString *dir = [NSHomeDirectory() stringByAppendingPathComponent:@"Documents"];
+    NSArray *files = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:dir error:nil];
+    NSString *latest = nil;
+    for (NSString *f in files) {
+        if ([f hasPrefix:@"WeChatAI_Backup_"] && [f hasSuffix:@".json"]) {
+            if (!latest || [f compare:latest] == NSOrderedDescending) latest = f;
+        }
+    }
+    return latest ? [dir stringByAppendingPathComponent:latest] : nil;
+}
+
++(BOOL)restoreFromFile:(NSString *)path {
+    NSData *fileData = [NSData dataWithContentsOfFile:path];
+    if (!fileData) return NO;
+    NSDictionary *backup = [NSJSONSerialization JSONObjectWithData:fileData options:0 error:nil];
+    if (![backup isKindOfClass:[NSDictionary class]]) return NO;
+    NSDictionary *data = backup[@"data"];
+    if (![data isKindOfClass:[NSDictionary class]]) return NO;
+
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    // 清空现有 WeChatAI 配置（全部账号），再写入备份
+    NSDictionary *all = [defaults dictionaryRepresentation];
+    for (NSString *key in all) {
+        if ([key hasPrefix:@"WeChatAI"]) {
+            [defaults removeObjectForKey:key];
+        }
+    }
+    for (NSString *key in data) {
+        if ([key hasPrefix:@"WeChatAI"]) {
+            [defaults setObject:data[key] forKey:key];
+        }
+    }
+    [defaults synchronize];
+
+    // 恢复当前账号的 API Key
+    NSString *key = data[@"__apiKey"];
+    if (key.length > 0) {
+        [self setApiKey:key];
+    }
+    return YES;
+}
+
 + (NSString *)apiKey {
     // 1. Keychain 优先（加密存储，越狱/取证工具也读不到）
     NSString *acc = g_currentAccount.length > 0 ? g_currentAccount : @"deepseek";
