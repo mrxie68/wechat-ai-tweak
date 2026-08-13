@@ -1575,13 +1575,16 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
         updateProgress(@"记录读取完成，正在让 AI 总结你的说话风格…");
         // 语料瘦身：单条截断到 80 字、总量上限 2500 字，避免大语料拖慢 API（总结风格用不到全文）
         NSMutableArray *shortTexts = [NSMutableArray array];
+        NSUInteger kept = 0;
         for (NSString *t in texts) {
+            if (kept >= 30) break;
             NSString *s = t;
-            if (s.length > 80) s = aiSafeTruncate(s, 80);
+            if (s.length > 60) s = aiSafeTruncate(s, 60);
             [shortTexts addObject:s];
+            kept++;
         }
         NSString *joined = [shortTexts componentsJoinedByString:@"\n"];
-        if (joined.length > 2500) joined = aiSafeTruncate(joined, 2500);
+        if (joined.length > 1500) joined = aiSafeTruncate(joined, 1500);
         // 检测语料有没有“我：/对方：”标注；没有就明确告诉 AI 别把对方话术算成用户的
         BOOL hasLabels = NO;
         for (NSString *t in texts) {
@@ -1597,27 +1600,24 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
         }
         NSArray *messages = @[@{@"role": @"user", @"content": joined}];
 
-        // 请求发出后的实时计时：每秒刷新弹窗，让用户看到“确实在等 AI”，而不是卡死
+        // 请求发出后的实时计时：用 NSTimer（主线程、完成时 invalidate），
+        // 避免弱引用自递归 block 在作用域结束后被释放导致 dispatch_after 传 NULL 闪退
         __block NSInteger elapsedSec = 0;
-        __block BOOL elapsedCanceled = NO;
-        __block void (^elapsedLoop)(void) = nil;
-        __weak void (^weakElapsedLoop)(void) = nil;
-        elapsedLoop = ^{
-            dispatch_async(dispatch_get_main_queue(), ^{
-                if (elapsedCanceled) return;
-                elapsedSec++;
-                if (progressAlert) {
-                    progressAlert.message = [NSString stringWithFormat:
-                                             @"请求已发出，正在等待 AI 回复…（已等待 %ld 秒）\n\n",
-                                             (long)elapsedSec];
-                }
-                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1 * NSEC_PER_SEC)),
-                               dispatch_get_main_queue(), weakElapsedLoop);
-            });
-        };
-        weakElapsedLoop = elapsedLoop;
+        __block NSTimer *elapsedTimer = nil;
         NSLog(kAITweakLogPrefix "学习请求已发出，等待 AI 总结…");
-        elapsedLoop();
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (progressAlert) {
+                __weak UIAlertController *weakAlert = progressAlert;
+                elapsedTimer = [NSTimer scheduledTimerWithTimeInterval:1.0
+                                                                repeats:YES
+                                                                  block:^(NSTimer *timer) {
+                    elapsedSec++;
+                    weakAlert.message = [NSString stringWithFormat:
+                                         @"请求已发出，正在等待 AI 回复…（已等待 %ld 秒）\n\n",
+                                         (long)elapsedSec];
+                }];
+            }
+        });
 
         NSTimeInterval startTs = CFAbsoluteTimeGetCurrent();
         [self sendWithRetry:messages
@@ -1627,7 +1627,10 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
                friendInfo:nil
                fewShotEnabled:NO
                  completion:^(NSString *reply, NSError *error) {
-            elapsedCanceled = YES; // 停止计时，避免恢复后继续刷弹窗
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [elapsedTimer invalidate]; // 停止计时
+                elapsedTimer = nil;
+            });
             if (error) {
                 NSLog(kAITweakLogPrefix "学习风格失败(%.1f秒): %@",
                       CFAbsoluteTimeGetCurrent() - startTs, error);
