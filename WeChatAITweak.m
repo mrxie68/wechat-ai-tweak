@@ -209,13 +209,32 @@ static BOOL aiIsSQLiteFile(NSString *path) {
     return n == 16 && memcmp(buf, "SQLite format 3", 16) == 0;
 }
 
+static NSString *aiMD5Hex(NSString *input); // 前向声明（定义在后面）
+static BOOL g_dbAccountDirUsed = NO; // 本次扫描是否限定在当前账号目录
+
 static NSArray *aiFindDatabaseFiles(void) {
     NSMutableArray *files = [NSMutableArray array];
     NSFileManager *fm = [NSFileManager defaultManager];
-    NSArray *roots = @[
-        [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support"],
-        [NSHomeDirectory() stringByAppendingPathComponent:@"Documents"]
-    ];
+    NSString *home = NSHomeDirectory();
+    NSString *documents = [home stringByAppendingPathComponent:@"Documents"];
+
+    // 账号隔离：微信 iOS 按 md5(wxid) 分目录存数据。
+    // 只搜当前账号的目录，避免两个账号在同一个沙盒时读到另一个账号的聊天记录。
+    NSMutableArray *roots = [NSMutableArray array];
+    g_dbAccountDirUsed = NO;
+    NSString *selfUsr = wechatSelfUsrName();
+    if (selfUsr.length > 0) {
+        NSString *accountDir = [documents stringByAppendingPathComponent:aiMD5Hex(selfUsr)];
+        if ([fm fileExistsAtPath:accountDir]) {
+            g_dbAccountDirUsed = YES;
+            [roots addObject:accountDir];
+        }
+    }
+    if (!g_dbAccountDirUsed) {
+        [roots addObject:documents]; // 找不到账号目录才退回全量扫描
+    }
+    [roots addObject:[home stringByAppendingPathComponent:@"Library/Application Support"]];
+
     for (NSString *root in roots) {
         if (![fm fileExistsAtPath:root]) continue;
         NSDirectoryEnumerator *en = [fm enumeratorAtPath:root];
@@ -549,8 +568,9 @@ static NSArray<NSString *> *fetchRecentTextsFromDB(NSString *chatId, NSInteger l
         [texts removeObjectsInRange:NSMakeRange(0, texts.count - (NSUInteger)limit)];
     }
     if (dbDiag) {
-        *dbDiag = [NSString stringWithFormat:@"[文件%ld/消息表%ld/可查%ld/方向%@/列%@/表%@/行%lu]",
+        *dbDiag = [NSString stringWithFormat:@"[文件%ld/消息表%ld/可查%ld/目录%@/方向%@/列%@/表%@/行%lu]",
                    (long)fileCount, (long)tableCount, (long)queryCount,
+                   g_dbAccountDirUsed ? @"账号" : @"全量",
                    usedDirCol.length ? usedDirCol : (tableCount > 0 ? @"无" : @"未测"),
                    usedTextCol.length ? usedTextCol : @"未测",
                    usedTable.length ? usedTable : @"未测",
