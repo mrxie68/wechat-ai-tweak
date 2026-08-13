@@ -422,6 +422,12 @@ static NSInteger aiTextReadabilityScore(NSArray<NSString *> *rows) {
     return score;
 }
 
+// 统一消息表（带 UserName 可按会话过滤）才值得做列探测；
+// Chat_ 开头的都是“一张表一个会话”的专属表，不匹配当前会话就直接跳过，避免几百次 PRAGMA
+static BOOL aiLooksLikeUnifiedTable(NSString *tbl) {
+    return ![tbl.lowercaseString hasPrefix:@"chat_"];
+}
+
 static NSArray<NSString *> *fetchRecentTextsFromDB(NSString *chatId, NSInteger limit, NSString **dbDiag) {
     NSMutableArray *texts = [NSMutableArray array];
     if (chatId.length == 0 || limit <= 0) return texts;
@@ -449,6 +455,8 @@ static NSArray<NSString *> *fetchRecentTextsFromDB(NSString *chatId, NSInteger l
             if (!aiIsMessageTable(tbl)) continue;
             tableCount++;
             BOOL chatSpecific = [tbl isEqualToString:exactChatTable] || [tbl isEqualToString:md5ChatTable];
+            // 性能优化：专属表不匹配当前会话就不探测列（几百张表逐张 PRAGMA 是学习慢的主因）
+            if (!chatSpecific && !aiLooksLikeUnifiedTable(tbl)) continue;
             NSArray *cols = aiSQLiteColumns(db, tbl);
             NSString *timeCol = aiPickColumn(cols, @[@"CreateTime", @"createTime", @"Time", @"time",
                                                      @"timestamp", @"msgCreateTime", @"MsgCreateTime",
@@ -1419,23 +1427,20 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
             if (!top) return;
             if (!progressAlert) {
                 progressAlert = [UIAlertController alertControllerWithTitle:@"正在学习聊天风格"
-                                                                   message:stage
+                                                                   message:[stage stringByAppendingString:@"\n\n"]
                                                             preferredStyle:UIAlertControllerStyleAlert];
                 UIActivityIndicatorView *spinner = [[UIActivityIndicatorView alloc]
                                                     initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleMedium];
                 spinner.translatesAutoresizingMaskIntoConstraints = NO;
                 [spinner startAnimating];
                 [progressAlert.view addSubview:spinner];
-                NSDictionary *views = @{@"spinner": spinner};
-                [progressAlert.view addConstraints:
-                 [NSLayoutConstraint constraintsWithVisualFormat:@"V:[spinner]-16-|"
-                                                         options:0 metrics:nil views:views]];
-                [progressAlert.view addConstraints:
-                 [NSLayoutConstraint constraintsWithVisualFormat:@"H:[spinner]-12-|"
-                                                         options:0 metrics:nil views:views]];
+                // 转圈居中在弹窗底部，消息下方留空行，避免和文字挤在一起
+                [spinner.centerXAnchor constraintEqualToAnchor:progressAlert.view.centerXAnchor].active = YES;
+                [spinner.bottomAnchor constraintEqualToAnchor:progressAlert.view.bottomAnchor
+                                                     constant:-18].active = YES;
                 [top presentViewController:progressAlert animated:NO completion:nil];
             } else {
-                progressAlert.message = stage;
+                progressAlert.message = [stage stringByAppendingString:@"\n\n"];
             }
         });
     };
