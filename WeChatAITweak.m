@@ -1494,6 +1494,8 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
     __block UIAlertController *progressAlert = nil;
     __block BOOL learningCanceled = NO;
     __block NSTimer *elapsedTimer = nil;
+    __block NSInteger elapsedSec = 0;
+    __block NSString *currentStage = @"读取记录";
 
     // 显示/更新“学习中”进度弹窗（带转圈）
     void (^updateProgress)(NSString *) = ^(NSString *stage) {
@@ -1548,6 +1550,21 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
     // 阶段 1：读取最近记录（放后台，避免卡界面）
     updateProgress(@"正在读取最近 50 条聊天记录…");
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        // 全程计时：从读取阶段就开始刷新弹窗，显示当前阶段+秒数，卡在哪一步一目了然
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (progressAlert && !learningCanceled) {
+                __weak UIAlertController *weakAlert = progressAlert;
+                elapsedTimer = [NSTimer scheduledTimerWithTimeInterval:1.0
+                                                                repeats:YES
+                                                                  block:^(NSTimer *timer) {
+                    elapsedSec++;
+                    weakAlert.message = [NSString stringWithFormat:
+                                         @"正在%@…（已 %ld 秒）\n\n",
+                                         currentStage, (long)elapsedSec];
+                }];
+            }
+        });
+
         // 刚启动微信时账号可能还没就绪：轮询等待 wechatSelfUsrName 非空（最多 5 秒），
         // 否则第一次点学习会因账号未锁定而读错 Key/数据库目录，重试才成功
         NSString *selfUsr = @"";
@@ -1637,6 +1654,7 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
         }
 
         // 阶段 2：让 AI 总结风格
+        currentStage = @"等待 AI 回复";
         updateProgress(@"记录读取完成，正在让 AI 总结你的说话风格…");
         // 语料瘦身：单条截断到 80 字、总量上限 2500 字，避免大语料拖慢 API（总结风格用不到全文）
         NSMutableArray *shortTexts = [NSMutableArray array];
@@ -1665,23 +1683,7 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
         }
         NSArray *messages = @[@{@"role": @"user", @"content": joined}];
 
-        // 请求发出后的实时计时：用 NSTimer（主线程、完成时 invalidate），
-        // 避免弱引用自递归 block 在作用域结束后被释放导致 dispatch_after 传 NULL 闪退
-        __block NSInteger elapsedSec = 0;
         NSLog(kAITweakLogPrefix "学习请求已发出，等待 AI 总结…");
-        dispatch_async(dispatch_get_main_queue(), ^{
-            if (progressAlert && !learningCanceled) {
-                __weak UIAlertController *weakAlert = progressAlert;
-                elapsedTimer = [NSTimer scheduledTimerWithTimeInterval:1.0
-                                                                repeats:YES
-                                                                  block:^(NSTimer *timer) {
-                    elapsedSec++;
-                    weakAlert.message = [NSString stringWithFormat:
-                                         @"请求已发出，正在等待 AI 回复…（已等待 %ld 秒）\n\n",
-                                         (long)elapsedSec];
-                }];
-            }
-        });
 
         NSTimeInterval startTs = CFAbsoluteTimeGetCurrent();
         [self sendWithRetry:messages

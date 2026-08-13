@@ -109,7 +109,7 @@ static NSArray<NSDictionary *> *aiParseFewShotSamples(NSString *samples, NSUInte
     NSDictionary *body = @{
         @"model": [AISettings model],
         @"messages": payload,
-        @"max_tokens": @800,  // 限制输出长度，防模型长篇大论拖慢响应
+        @"max_tokens": @400,  // 限制输出长度：回复更短更快，防长篇大论
         @"temperature": @([AISettings temperature]),
         @"frequency_penalty": @([AISettings frequencyPenalty]),
         @"presence_penalty": @([AISettings presencePenalty])
