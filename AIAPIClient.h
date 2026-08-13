@@ -13,6 +13,7 @@
          styleProfile:(NSString *)styleProfile
          userProfile:(NSString *)userProfile
          friendInfo:(NSDictionary *)friendInfo
+         timeoutInterval:(NSTimeInterval)timeoutInterval
          fewShotEnabled:(BOOL)fewShotEnabled
           completion:(void (^)(NSString *reply, NSError *error))completion;
 

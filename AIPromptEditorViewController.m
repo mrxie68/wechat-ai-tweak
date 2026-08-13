@@ -622,6 +622,7 @@ static UITextField *makeRowField(NSString *placeholder) {
                           styleProfile:nil
                           userProfile:[AISettings userProfile]
                           friendInfo:nil
+                          timeoutInterval:60
                           fewShotEnabled:YES
                             completion:^(NSString *reply, NSError *error) {
         dispatch_async(dispatch_get_main_queue(), ^{

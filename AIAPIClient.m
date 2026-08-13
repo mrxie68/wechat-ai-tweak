@@ -51,6 +51,7 @@ static NSArray<NSDictionary *> *aiParseFewShotSamples(NSString *samples, NSUInte
          styleProfile:(NSString *)styleProfile
          userProfile:(NSString *)userProfile
          friendInfo:(NSDictionary *)friendInfo
+         timeoutInterval:(NSTimeInterval)timeoutInterval
          fewShotEnabled:(BOOL)fewShotEnabled
           completion:(void (^)(NSString *, NSError *))completion {
 
@@ -59,7 +60,7 @@ static NSArray<NSDictionary *> *aiParseFewShotSamples(NSString *samples, NSUInte
     request.HTTPMethod = @"POST";
     [request setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
     [request setValue:[NSString stringWithFormat:@"Bearer %@", [AISettings apiKey]] forHTTPHeaderField:@"Authorization"];
-    [request setTimeoutInterval:60];
+    [request setTimeoutInterval:timeoutInterval > 0 ? timeoutInterval : 60];
 
     // 系统提示词 + 会话历史
     NSMutableArray *payload = [NSMutableArray array];

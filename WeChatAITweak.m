@@ -868,6 +868,7 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
          styleProfile:(NSString *)styleProfile
          userProfile:(NSString *)userProfile
          friendInfo:(NSDictionary *)friendInfo
+         timeoutInterval:(NSTimeInterval)timeoutInterval
          fewShotEnabled:(BOOL)fewShotEnabled
           completion:(void (^)(NSString *reply, NSError *error))completion {
     __block void (^attemptBlock)(NSInteger) = nil;
@@ -878,6 +879,7 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
                               styleProfile:styleProfile
                               userProfile:userProfile
                               friendInfo:friendInfo
+                              timeoutInterval:timeoutInterval
                               fewShotEnabled:fewShotEnabled
                                 completion:^(NSString *reply, NSError *error) {
             if (error && [self shouldRetryError:error] && attempt < 3) {
@@ -1097,6 +1099,7 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
                styleProfile:[AISettings styleProfileForChat:chatId]
                userProfile:[AISettings userProfile]
                friendInfo:nil
+               timeoutInterval:60
                fewShotEnabled:YES
                  completion:^(NSString *reply, NSError *error) {
             @synchronized (self) {
@@ -1179,6 +1182,7 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
                styleProfile:[AISettings styleProfileForChat:chatId]
                userProfile:[AISettings userProfile]
                friendInfo:[AISettings friendInfoForChat:chatId]
+               timeoutInterval:60
                fewShotEnabled:YES
                  completion:^(NSString *reply, NSError *error) {
             @synchronized (self) {
@@ -1685,6 +1689,7 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
                styleProfile:nil
                userProfile:nil
                friendInfo:nil
+               timeoutInterval:20 // 学习超时 20 秒，超时自动重试，避免干等一分钟
                fewShotEnabled:NO
                  completion:^(NSString *reply, NSError *error) {
             if (learningCanceled) return; // 已取消：忽略结果
