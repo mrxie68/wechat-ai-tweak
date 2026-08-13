@@ -404,8 +404,8 @@ static NSInteger aiTextReadabilityScore(NSArray<NSString *> *rows) {
                 texty++;
             } else if ((ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'z') ||
                        (ch >= 'A' && ch <= 'Z') || ch == ' ' || ch == ',' || ch == '.' ||
-                       ch == '?' || ch == '!' || ch == '，' || ch == '。' || ch == '？' ||
-                       ch == '！' || ch == '、' || ch == ':' || ch == '：' || ch == '-' ||
+                       ch == '?' || ch == '!' || ch == 0xFF0C || ch == 0x3002 || ch == 0xFF1F ||
+                       ch == 0xFF01 || ch == 0x3001 || ch == ':' || ch == 0xFF1A || ch == '-' ||
                        ch == '/' || ch == '&' || ch == '@' || ch == '+' || ch == '#' ||
                        ch == '=') {
                 texty++;
@@ -1309,7 +1309,35 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
     if (chatId.length > 0) {
         [AISettings setChatEnabled:sender.on chatId:chatId];
         NSLog(kAITweakLogPrefix "会话开关：%@ -> %@", chatId, sender.on ? @"开" : @"关");
+        if (sender.on) {
+            [self preloadContextForChat:chatId];
+        }
     }
+}
+
+// 打开 AI 助手开关时，从数据库预载最近聊天记录进上下文，
+// 避免“开开关前聊了一大段，AI 却从零开始”导致答非所问
++ (void)preloadContextForChat:(NSString *)chatId {
+    if (chatId.length == 0) return;
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        NSString *diag = @"";
+        NSArray *texts = fetchRecentTexts(chatId, 30, &diag);
+        if (texts.count == 0) return;
+        NSMutableString *blob = [NSMutableString stringWithString:
+                                 @"【开启AI助手前最近的聊天记录，用于了解上下文，未标注发送方】\n"];
+        for (NSString *t in texts) {
+            if (blob.length > 1400) break;
+            [blob appendString:t];
+            [blob appendString:@"\n"];
+        }
+        NSString *content = [blob copy];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            // 已有上下文就不重复塞（避免反复开关导致重复预载）
+            if ([[AIContext shared] messagesForChat:chatId].count > 0) return;
+            [[AIContext shared] appendUser:content timestamp:(NSTimeInterval)time(NULL) chatId:chatId];
+            NSLog(kAITweakLogPrefix "开启AI时预载上下文: %@ (%lu条)", chatId, (unsigned long)texts.count);
+        });
+    });
 }
 
 // 聊天信息页“清空记忆”：确认后清空本会话上下文
