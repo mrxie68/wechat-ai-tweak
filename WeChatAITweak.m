@@ -705,6 +705,7 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
          userProfile:(NSString *)userProfile
           completion:(void (^)(NSString *reply, NSError *error))completion {
     __block void (^attemptBlock)(NSInteger) = nil;
+    __weak void (^weakAttemptBlock)(NSInteger) = nil;
     attemptBlock = ^(NSInteger attempt) {
         [[AIAPIClient shared] sendMessages:history
                               systemPrompt:systemPrompt
@@ -718,13 +719,14 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
                       wait, (long)attempt, error);
                 dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(wait * NSEC_PER_SEC)),
                                dispatch_get_main_queue(), ^{
-                    attemptBlock(attempt + 1);
+                    if (weakAttemptBlock) weakAttemptBlock(attempt + 1);
                 });
                 return;
             }
             completion(reply, error);
         }];
     };
+    weakAttemptBlock = attemptBlock;
     attemptBlock(1);
 }
 
@@ -864,7 +866,10 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
         if (!g_inFlightChats) g_inFlightChats = [NSMutableSet set];
         if ([g_inFlightChats containsObject:chatId]) return; // 正在回复，不插嘴
     }
-    static NSArray *lightReplies = @[@"哈哈", @"😂", @"笑死我了", @"哈哈哈哈哈"];
+    static NSArray *lightReplies = nil;
+    if (!lightReplies) {
+        lightReplies = @[@"哈哈", @"😂", @"笑死我了", @"哈哈哈哈哈"];
+    }
     NSString *reply = lightReplies[arc4random_uniform((uint32_t)lightReplies.count)];
     double wait = 1.2 + (double)(arc4random_uniform(15) / 10.0);
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(wait * NSEC_PER_SEC)),
