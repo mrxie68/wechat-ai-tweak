@@ -1375,6 +1375,7 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
 // 避免“开开关前聊了一大段，AI 却从零开始”导致答非所问
 + (void)preloadContextForChat:(NSString *)chatId {
     if (chatId.length == 0) return;
+    [AISettings setCurrentAccount:[self selfUsrName]];
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
         NSString *diag = @"";
         NSArray *texts = fetchRecentTexts(chatId, 30, &diag);
@@ -1462,6 +1463,10 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
 }
 
 + (void)learnStyleForChat:(NSString *)chatId {
+    // 显式锁定当前账号：避免刚启动微信、还没处理过消息时账号未初始化，
+    // 导致读 Key 时落到错误槽位（测试对话能过但学习 401 的根因）
+    [AISettings setCurrentAccount:[self selfUsrName]];
+
     __block UIAlertController *progressAlert = nil;
 
     // 显示/更新“学习中”进度弹窗（带转圈）
