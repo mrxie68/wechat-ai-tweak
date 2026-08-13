@@ -312,13 +312,19 @@ static NSString *aiMD5Hex(NSString *input) {
 // ==================== 数据库直读（学习风格用，只查当前会话） ====================
 
 static NSArray<NSString *> *aiQueryMessages(sqlite3 *db, NSString *table, NSString *textCol,
-                                            NSString *timeCol, NSString *userCol, NSString *dirCol,
+                                            NSString *timeCol, NSString *userCol, NSString *typeCol,
+                                            NSString *dirCol,
                                             BOOL chatSpecific, NSString *chatId, NSInteger limit) {
     NSMutableArray *rows = [NSMutableArray array];
     NSMutableArray *wheres = [NSMutableArray array];
     if (!chatSpecific && userCol) {
         [wheres addObject:[NSString stringWithFormat:@"\"%@\" = ?",
                            [userCol stringByReplacingOccurrencesOfString:@"\"" withString:@"\"\""]]];
+    }
+    // 微信文字消息 Type = 1；表情/图片/语音等不参与学习，避免斗图把 50 条配额占满
+    if (typeCol.length > 0) {
+        [wheres addObject:[NSString stringWithFormat:@"\"%@\" = 1",
+                           [typeCol stringByReplacingOccurrencesOfString:@"\"" withString:@"\"\""]]];
     }
     NSString *whereSql = wheres.count
         ? [NSString stringWithFormat:@" WHERE %@", [wheres componentsJoinedByString:@" AND "]]
@@ -483,6 +489,9 @@ static NSArray<NSString *> *fetchRecentTextsFromDB(NSString *chatId, NSInteger l
                                                      @"sessionId", @"SessionId", @"chatName", @"ChatName",
                                                      @"Session", @"session", @"Chat", @"chat",
                                                      @"ChatId", @"chatId", @"nsFromUsr"]);
+            // 消息类型列：有 Type 列就在 SQL 层过滤文字消息，表情/媒体不占学习配额
+            NSString *typeCol = aiPickColumn(cols, @[@"Type", @"type", @"MsgType", @"msgType",
+                                                     @"messageType", @"MessageType"]);
             // 发送方方向列（布尔语义：非0=自己发的），用于学习时区分“我/对方”
             NSString *dirCol = aiPickColumn(cols, @[@"IsSend", @"isSend", @"IsSender", @"isSender",
                                                     @"IsFromMe", @"isFromMe", @"FromMe", @"fromMe",
@@ -501,11 +510,12 @@ static NSArray<NSString *> *fetchRecentTextsFromDB(NSString *chatId, NSInteger l
             NSString *bestCol = nil;
             NSArray *bestRows = nil;
             NSInteger bestScore = -1;
+            NSInteger rawLimit = limit * 4; // 放宽到 4 倍，兼容没有 Type 列时靠代码过滤掉媒体
             for (NSString *tc in textCandidates) {
                 NSString *textCol = aiPickColumn(cols, @[tc]);
                 if (!textCol) continue;
-                NSArray *rows = aiQueryMessages(db, tbl, textCol, timeCol, userCol,
-                                                dirCol, chatSpecific, chatId, limit);
+                NSArray *rows = aiQueryMessages(db, tbl, textCol, timeCol, userCol, typeCol,
+                                                dirCol, chatSpecific, chatId, rawLimit);
                 NSInteger score = aiTextReadabilityScore(rows);
                 if (score > bestScore) {
                     bestScore = score;
