@@ -115,7 +115,16 @@ static NSArray<NSDictionary *> *aiParseFewShotSamples(NSString *samples, NSUInte
     };
 
     NSError *jsonError = nil;
-    NSData *jsonData = [NSJSONSerialization dataWithJSONObject:body options:0 error:&jsonError];
+    NSData *jsonData = nil;
+    @try {
+        jsonData = [NSJSONSerialization dataWithJSONObject:body options:0 error:&jsonError];
+    } @catch (NSException *e) {
+        jsonError = [NSError errorWithDomain:@"WeChatAI"
+                                        code:3
+                                    userInfo:@{NSLocalizedDescriptionKey:
+                                               [NSString stringWithFormat:@"请求序列化异常: %@", e]}];
+        jsonData = nil;
+    }
     if (!jsonData) {
         completion(nil, jsonError);
         return;

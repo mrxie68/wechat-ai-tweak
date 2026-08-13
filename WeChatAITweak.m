@@ -139,6 +139,17 @@ static BOOL isChatAllowed(NSString *chatId) {
     return NO;
 }
 
+// 安全截断：避免把 emoji 的代理对切半（切半后 JSON 序列化可能闪退）
+static NSString *aiSafeTruncate(NSString *text, NSUInteger max) {
+    if (text.length <= max) return text;
+    NSString *cut = [text substringToIndex:max];
+    unichar last = [cut characterAtIndex:cut.length - 1];
+    if (last >= 0xD800 && last <= 0xDBFF) { // 高代理 = emoji 被切半，退一位
+        cut = [cut substringToIndex:cut.length - 1];
+    }
+    return cut;
+}
+
 // 压缩“哈哈哈哈哈哈…”这类重复字符刷屏：超过 20 字且单一字符占比 ≥70% 时截成前 6 字，
 // 防止几百个“哈”占满上下文和语料（意思不变，AI 照样看懂在笑）
 static NSString *aiCompressRepeatedText(NSString *text) {
@@ -149,7 +160,7 @@ static NSString *aiCompressRepeatedText(NSString *text) {
         if ([text characterAtIndex:i] == first) same++;
     }
     if (same * 10 >= (NSInteger)text.length * 7) {
-        return [text substringToIndex:6];
+        return aiSafeTruncate(text, 6);
     }
     return text;
 }
@@ -1535,7 +1546,7 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
             for (NSString *s in rawTexts) {
                 if (previews.count >= 3) break;
                 NSString *p = [s stringByReplacingOccurrencesOfString:@"\n" withString:@"⏎"];
-                if (p.length > 20) p = [p substringToIndex:20];
+                if (p.length > 20) p = aiSafeTruncate(p, 20);
                 [previews addObject:[NSString stringWithFormat:@"%lu字:%@",
                                      (unsigned long)s.length, p]];
             }
@@ -1566,11 +1577,11 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
         NSMutableArray *shortTexts = [NSMutableArray array];
         for (NSString *t in texts) {
             NSString *s = t;
-            if (s.length > 80) s = [s substringToIndex:80];
+            if (s.length > 80) s = aiSafeTruncate(s, 80);
             [shortTexts addObject:s];
         }
         NSString *joined = [shortTexts componentsJoinedByString:@"\n"];
-        if (joined.length > 2500) joined = [joined substringToIndex:2500];
+        if (joined.length > 2500) joined = aiSafeTruncate(joined, 2500);
         // 检测语料有没有“我：/对方：”标注；没有就明确告诉 AI 别把对方话术算成用户的
         BOOL hasLabels = NO;
         for (NSString *t in texts) {
