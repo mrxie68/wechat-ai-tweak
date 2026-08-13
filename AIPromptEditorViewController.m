@@ -120,6 +120,9 @@ static UITextField *makeRowField(NSString *placeholder) {
 - (void)viewDidLoad {
     [super viewDidLoad];
 
+    // 进入设置页先锁定当前账号的数据目录（切号后设置互不串用）
+    [AISettings setCurrentAccount:[WeChatAIHandler selfUsrName]];
+
     self.title = @"AI 设置";
     self.view.backgroundColor = [UIColor systemGroupedBackgroundColor];
 

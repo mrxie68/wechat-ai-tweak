@@ -747,6 +747,7 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
 + (void)syncContextAccount {
     NSString *usrName = wechatSelfUsrName();
     if (usrName.length == 0) return;
+    [AISettings setCurrentAccount:usrName]; // 账号级数据隔离：切号即切换设置/Key/档案
     @synchronized (self) {
         if (g_contextAccount && ![g_contextAccount isEqualToString:usrName]) {
             NSLog(kAITweakLogPrefix "检测到微信账号切换，清空全部上下文");
