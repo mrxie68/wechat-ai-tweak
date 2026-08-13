@@ -1325,7 +1325,8 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
         NSString *diag = @"";
         NSArray *texts = fetchRecentTexts(chatId, 50, &diag);
-        // 过滤掉“哦/？/哈哈”这类 ≤2 字的极短消息，提高语料信息密度
+        // 过滤噪音：只丢纯标点/单字语气词（哦、嗯、？）；
+        // “哈哈/嗯嗯/行行”这类 2 字风格词汇保留（它们是说话风格的一部分）
         NSMutableArray *filtered = [NSMutableArray array];
         for (NSString *t in texts) {
             NSString *body = t;
@@ -1333,7 +1334,20 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
             else if ([body hasPrefix:@"对方："]) body = [body substringFromIndex:3];
             body = [body stringByTrimmingCharactersInSet:
                     [NSCharacterSet whitespaceAndNewlineCharacterSet]];
-            if (body.length > 2) [filtered addObject:t];
+            if (body.length >= 3) {
+                [filtered addObject:t];
+                continue;
+            }
+            if (body.length == 2) {
+                unichar c0 = [body characterAtIndex:0];
+                unichar c1 = [body characterAtIndex:1];
+                BOOL hasText = ((c0 >= '0' && c0 <= '9') || (c0 >= 'a' && c0 <= 'z') ||
+                                (c0 >= 'A' && c0 <= 'Z') || (c0 >= 0x4E00 && c0 <= 0x9FFF)) ||
+                               ((c1 >= '0' && c1 <= '9') || (c1 >= 'a' && c1 <= 'z') ||
+                                (c1 >= 'A' && c1 <= 'Z') || (c1 >= 0x4E00 && c1 <= 0x9FFF));
+                if (hasText) [filtered addObject:t];
+            }
+            // 长度 <= 1：纯语气词/标点，丢弃
         }
         texts = filtered;
         if (texts.count < 5) {
