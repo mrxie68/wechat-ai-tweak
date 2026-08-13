@@ -5,6 +5,12 @@
     NSString *_chatId;
     NSString *_initialProfile;
     NSDictionary *_friendInfo;
+    UILabel *_callLabel;
+    UILabel *_relLabel;
+    UILabel *_favLabel;
+    UILabel *_basicLabel;
+    UILabel *_noteLabel;
+    UILabel *_profileLabel;
     UITextView *_textView;
     UITextField *_callField;
     UITextField *_relationField;
@@ -23,6 +29,29 @@
     return self;
 }
 
+- (UILabel *)makeFieldLabel:(NSString *)text {
+    UILabel *label = [[UILabel alloc] initWithFrame:CGRectZero];
+    label.text = text;
+    label.font = [UIFont systemFontOfSize:15];
+    return label;
+}
+
+- (UILabel *)makeHintLabel:(NSString *)text {
+    UILabel *label = [[UILabel alloc] initWithFrame:CGRectZero];
+    label.text = text;
+    label.font = [UIFont systemFontOfSize:12];
+    label.textColor = [UIColor secondaryLabelColor];
+    return label;
+}
+
+- (UITextView *)makeSmallTextView {
+    UITextView *view = [[UITextView alloc] initWithFrame:CGRectZero];
+    view.font = [UIFont systemFontOfSize:14];
+    view.backgroundColor = [UIColor secondarySystemGroupedBackgroundColor];
+    view.layer.cornerRadius = 8;
+    return view;
+}
+
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.title = @"编辑档案";
@@ -37,73 +66,47 @@
                                                                              action:@selector(saveTapped)];
 
     CGFloat w = self.view.bounds.size.width;
-
-    // 对方信息：称呼 / 关系 / 好感度 / 基本情况 / 备注
-    UILabel *callLabel = [[UILabel alloc] initWithFrame:CGRectMake(16, 12, 56, 30)];
-    callLabel.text = @"称呼";
-    callLabel.font = [UIFont systemFontOfSize:15];
-    [self.view addSubview:callLabel];
-    _callField = [[UITextField alloc] initWithFrame:CGRectMake(78, 12, w - 94, 30)];
+    _callLabel = [self makeFieldLabel:@"称呼"];
+    [self.view addSubview:_callLabel];
+    _callField = [[UITextField alloc] initWithFrame:CGRectZero];
     _callField.placeholder = @"如：老张 / 老铁 / 阿凯";
     _callField.font = [UIFont systemFontOfSize:15];
     _callField.borderStyle = UITextBorderStyleRoundedRect;
     _callField.text = _friendInfo[@"call"] ?: @"";
     [self.view addSubview:_callField];
 
-    UILabel *relLabel = [[UILabel alloc] initWithFrame:CGRectMake(16, 12, 56, 30)];
-    relLabel.frame = CGRectMake(16, 50, 56, 30);
-    relLabel.text = @"关系";
-    relLabel.font = [UIFont systemFontOfSize:15];
-    [self.view addSubview:relLabel];
-    _relationField = [[UITextField alloc] initWithFrame:CGRectMake(78, 50, w - 94, 30)];
+    _relLabel = [self makeFieldLabel:@"关系"];
+    [self.view addSubview:_relLabel];
+    _relationField = [[UITextField alloc] initWithFrame:CGRectZero];
     _relationField.placeholder = @"如：好朋友 / 同事 / 家人";
     _relationField.font = [UIFont systemFontOfSize:15];
     _relationField.borderStyle = UITextBorderStyleRoundedRect;
     _relationField.text = _friendInfo[@"relation"] ?: @"";
     [self.view addSubview:_relationField];
 
-    UILabel *favLabel = [[UILabel alloc] initWithFrame:CGRectMake(16, 88, 56, 30)];
-    favLabel.text = @"好感度";
-    favLabel.font = [UIFont systemFontOfSize:15];
-    [self.view addSubview:favLabel];
+    _favLabel = [self makeFieldLabel:@"好感度"];
+    [self.view addSubview:_favLabel];
     _favorControl = [[UISegmentedControl alloc] initWithItems:@[@"高", @"中", @"低"]];
-    _favorControl.frame = CGRectMake(78, 88, w - 94, 30);
+    _favorControl.frame = CGRectZero;
     NSString *fav = _friendInfo[@"favor"] ?: @"中";
     _favorControl.selectedSegmentIndex = [fav isEqualToString:@"高"] ? 0 : ([fav isEqualToString:@"低"] ? 2 : 1);
     [self.view addSubview:_favorControl];
 
-    UILabel *basicLabel = [[UILabel alloc] initWithFrame:CGRectMake(16, 126, w - 32, 16)];
-    basicLabel.text = @"对方基本情况（工作/家庭/住址，AI 以此为准不编造）";
-    basicLabel.font = [UIFont systemFontOfSize:12];
-    basicLabel.textColor = [UIColor secondaryLabelColor];
-    [self.view addSubview:basicLabel];
-    _basicView = [[UITextView alloc] initWithFrame:CGRectMake(16, 146, w - 32, 56)];
-    _basicView.font = [UIFont systemFontOfSize:14];
+    _basicLabel = [self makeHintLabel:@"对方基本情况（工作/家庭/住址，AI 以此为准不编造）"];
+    [self.view addSubview:_basicLabel];
+    _basicView = [self makeSmallTextView];
     _basicView.text = _friendInfo[@"basic"] ?: @"";
-    _basicView.backgroundColor = [UIColor secondarySystemGroupedBackgroundColor];
-    _basicView.layer.cornerRadius = 8;
     [self.view addSubview:_basicView];
 
-    UILabel *noteLabel = [[UILabel alloc] initWithFrame:CGRectMake(16, 210, w - 32, 16)];
-    noteLabel.text = @"备注（性格/习惯/共同经历/雷区）";
-    noteLabel.font = [UIFont systemFontOfSize:12];
-    noteLabel.textColor = [UIColor secondaryLabelColor];
-    [self.view addSubview:noteLabel];
-    _noteView = [[UITextView alloc] initWithFrame:CGRectMake(16, 230, w - 32, 56)];
-    _noteView.font = [UIFont systemFontOfSize:14];
+    _noteLabel = [self makeHintLabel:@"备注（性格/习惯/共同经历/雷区）"];
+    [self.view addSubview:_noteLabel];
+    _noteView = [self makeSmallTextView];
     _noteView.text = _friendInfo[@"note"] ?: @"";
-    _noteView.backgroundColor = [UIColor secondarySystemGroupedBackgroundColor];
-    _noteView.layer.cornerRadius = 8;
     [self.view addSubview:_noteView];
 
-    UILabel *profileLabel = [[UILabel alloc] initWithFrame:CGRectMake(16, 294, w - 32, 16)];
-    profileLabel.text = @"风格档案（AI 学出来的，可修改完善）";
-    profileLabel.font = [UIFont systemFontOfSize:12];
-    profileLabel.textColor = [UIColor secondaryLabelColor];
-    [self.view addSubview:profileLabel];
-
-    _textView = [[UITextView alloc] initWithFrame:CGRectMake(16, 314, w - 32, self.view.bounds.size.height - 326)];
-    _textView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    _profileLabel = [self makeHintLabel:@"风格档案（AI 学出来的，可修改完善）"];
+    [self.view addSubview:_profileLabel];
+    _textView = [[UITextView alloc] initWithFrame:CGRectZero];
     _textView.font = [UIFont systemFontOfSize:15];
     _textView.text = _initialProfile;
     _textView.textContainerInset = UIEdgeInsetsMake(12, 8, 12, 8);
@@ -111,6 +114,45 @@
     _textView.backgroundColor = [UIColor secondarySystemGroupedBackgroundColor];
     _textView.layer.cornerRadius = 12;
     [self.view addSubview:_textView];
+}
+
+- (void)viewDidLayoutSubviews {
+    [super viewDidLayoutSubviews];
+    CGFloat w = self.view.bounds.size.width;
+    CGFloat top = self.view.safeAreaInsets.top + 12; // 避开导航栏，不再和取消/保存重叠
+    CGFloat bottom = self.view.bounds.size.height - self.view.safeAreaInsets.bottom - 16;
+    CGFloat labelW = 56;
+    CGFloat fieldX = 78;
+    CGFloat fieldW = w - fieldX - 16;
+    CGFloat rowH = 30;
+    CGFloat gap = 8;
+    CGFloat y = top;
+
+    _callLabel.frame = CGRectMake(16, y, labelW, rowH);
+    _callField.frame = CGRectMake(fieldX, y, fieldW, rowH);
+    y += rowH + gap;
+
+    _relLabel.frame = CGRectMake(16, y, labelW, rowH);
+    _relationField.frame = CGRectMake(fieldX, y, fieldW, rowH);
+    y += rowH + gap;
+
+    _favLabel.frame = CGRectMake(16, y, labelW, rowH);
+    _favorControl.frame = CGRectMake(fieldX, y, fieldW, rowH);
+    y += rowH + gap;
+
+    _basicLabel.frame = CGRectMake(16, y, w - 32, 16);
+    y += 16 + 4;
+    _basicView.frame = CGRectMake(16, y, w - 32, 52);
+    y += 52 + 12;
+
+    _noteLabel.frame = CGRectMake(16, y, w - 32, 16);
+    y += 16 + 4;
+    _noteView.frame = CGRectMake(16, y, w - 32, 52);
+    y += 52 + 12;
+
+    _profileLabel.frame = CGRectMake(16, y, w - 32, 16);
+    y += 16 + 8;
+    _textView.frame = CGRectMake(16, y, w - 32, MAX(bottom - y, 80));
 }
 
 - (void)saveTapped {
@@ -126,7 +168,6 @@
     }
     [AISettings setStyleProfile:text forChat:_chatId];
 
-    // 对方信息：只保存填了的字段
     NSMutableDictionary *info = [NSMutableDictionary dictionary];
     NSString *call = [_callField.text stringByTrimmingCharactersInSet:
                       [NSCharacterSet whitespaceAndNewlineCharacterSet]];
