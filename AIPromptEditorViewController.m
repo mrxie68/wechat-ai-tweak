@@ -702,6 +702,7 @@ static UITextField *makeRowField(NSString *placeholder) {
                                            handler:^(UIAlertAction *action) {
         [[AIContext shared] clearAll];
         [AISettings clearAllStyleProfiles];
+        [AISettings clearAllStyleCorpora];
         UIAlertController *done = [UIAlertController alertControllerWithTitle:@"已清空"
                                                                       message:@"全部会话的记忆和风格档案已清空，AI 从现在开始重新了解上下文。"
                                                                preferredStyle:UIAlertControllerStyleAlert];

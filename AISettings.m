@@ -22,6 +22,7 @@ static NSString * const kAISettingsTypingSimulationKey = @"WeChatAITypingSimulat
 static NSString * const kAISettingsChatOverridesKey = @"WeChatAIChatOverrides";
 static NSString * const kAISettingsProfilePrefix = @"WeChatAIStyleProfile_";
 static NSString * const kAISettingsFriendInfoPrefix = @"WeChatAIFriendInfo_";
+static NSString * const kAISettingsStyleCorpusPrefix = @"WeChatAIStyleCorpus_";
 
 static NSString *g_currentAccount = nil;
 
@@ -258,6 +259,55 @@ static NSString *g_currentAccount = nil;
         [defaults setObject:info forKey:key];
     } else {
         [defaults removeObjectForKey:key];
+    }
+    [defaults synchronize];
+}
+
++(NSString *)styleCorpusKeyForChatId:(NSString *)chatId {
+    @synchronized (self) {
+        if (g_currentAccount.length == 0) {
+            return [kAISettingsStyleCorpusPrefix stringByAppendingString:chatId];
+        }
+        return [NSString stringWithFormat:@"%@%@_%@",
+                kAISettingsStyleCorpusPrefix, g_currentAccount, chatId];
+    }
+}
+
++(NSArray<NSString *> *)styleCorpusForChat:(NSString *)chatId {
+    if (chatId.length == 0) return @[];
+    return [[NSUserDefaults standardUserDefaults]
+            arrayForKey:[self styleCorpusKeyForChatId:chatId]] ?: @[];
+}
+
++(void)appendStyleCorpusMessage:(NSString *)content role:(NSString *)role chatId:(NSString *)chatId {
+    if (chatId.length == 0 || content.length == 0 || role.length == 0) return;
+    NSString *line = [NSString stringWithFormat:@"%@：%@", role, content];
+    NSMutableArray *list = [[self styleCorpusForChat:chatId] mutableCopy];
+    // 去重：和最新一条相同就跳过（AddMsg hook 与回显可能双触发）
+    if ([list.lastObject isEqualToString:line]) return;
+    [list addObject:line];
+    if (list.count > 120) {
+        [list removeObjectsInRange:NSMakeRange(0, list.count - 120)];
+    }
+    [[NSUserDefaults standardUserDefaults] setObject:list
+                                              forKey:[self styleCorpusKeyForChatId:chatId]];
+    [[NSUserDefaults standardUserDefaults] synchronize];
+}
+
++(void)clearStyleCorpusForChat:(NSString *)chatId {
+    if (chatId.length == 0) return;
+    [[NSUserDefaults standardUserDefaults]
+     removeObjectForKey:[self styleCorpusKeyForChatId:chatId]];
+    [[NSUserDefaults standardUserDefaults] synchronize];
+}
+
++(void)clearAllStyleCorpora {
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    NSDictionary *all = [defaults dictionaryRepresentation];
+    for (NSString *key in all) {
+        if ([key hasPrefix:kAISettingsStyleCorpusPrefix]) {
+            [defaults removeObjectForKey:key];
+        }
     }
     [defaults synchronize];
 }

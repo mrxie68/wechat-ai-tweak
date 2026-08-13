@@ -819,6 +819,7 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
     if (!isChatAllowed(chatId)) return;
     content = aiCompressRepeatedText(content); // 手动发送同样压缩
     if ([self isRecentReply:content chatId:chatId]) return; // 其他路径已记过
+    [AISettings appendStyleCorpusMessage:content role:@"我" chatId:chatId];
     [self noteReplySent:content chatId:chatId];
     [[AIContext shared] appendAssistant:content timestamp:timestamp chatId:chatId];
     NSLog(kAITweakLogPrefix "记录手动发送(%@)", chatId);
@@ -972,11 +973,18 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
 
         if (content.length == 0) return;
         content = aiCompressRepeatedText(content); // 哈哈哈刷屏压缩，防上下文被占满
+        // 实时标注语料：用运行时方向记录（100% 准确），学习时优先使用
+        if (!isSelf && isChatAllowed(chatId)) {
+            [AISettings appendStyleCorpusMessage:content role:@"对方" chatId:chatId];
+        }
 
         // 自己发的消息：先识别 @AI 命令；不是命令则记进上下文（8.0.5x 没有发送 hook，靠回显记录）
         if (isSelf) {
             // 插件自己刚发出的回复回显：发出时已记过上下文，这里跳过，避免记两遍
             if ([self isRecentReply:content chatId:chatId]) return;
+            if (isChatAllowed(chatId)) {
+                [AISettings appendStyleCorpusMessage:content role:@"我" chatId:chatId];
+            }
             if ([AISettings enabled] && isAutoMode()) {
                 [[AIContext shared] appendAssistant:content timestamp:msgTime chatId:chatId];
             }
@@ -1435,6 +1443,7 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
                                                handler:^(UIAlertAction *action) {
             [[AIContext shared] clearChat:chatId];
             [AISettings clearStyleProfileForChat:chatId];
+            [AISettings clearStyleCorpusForChat:chatId];
             [self presentAlertWithTitle:@"已清空"
                                 message:@"本会话的记忆和风格档案已清空，AI 从现在开始重新了解上下文。"];
         }]];
@@ -1578,17 +1587,24 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
         }
 
         NSString *diag = @"";
-        // 刚进微信时数据库可能还在初始化/被锁，首次取不到就自动重试（最多 3 次），
-        // 不用用户手动取消再点一次
         NSArray *rawTexts = nil;
-        for (NSInteger attempt = 1; attempt <= 3; attempt++) {
-            rawTexts = fetchRecentTexts(chatId, 50, &diag);
-            if (rawTexts.count >= 5) break;
-            if (attempt < 3) {
-                updateProgress(attempt == 1
-                               ? @"正在读取记录…首次未取到，稍后自动重试…"
-                               : @"正在读取记录…再次重试中…");
-                [NSThread sleepForTimeInterval:2.0]; // 后台线程，安全
+        // 优先用实时标注语料（运行时方向，100% 准确）；不够再读数据库
+        NSArray *corpus = [AISettings styleCorpusForChat:chatId];
+        if (corpus.count >= 5) {
+            rawTexts = corpus;
+            diag = [NSString stringWithFormat:@"[语料:实时标注%lu条]", (unsigned long)corpus.count];
+            updateProgress(@"已用实时标注语料，正在总结…");
+        } else {
+            // 刚进微信时数据库可能还在初始化/被锁，首次取不到就自动重试（最多 3 次）
+            for (NSInteger attempt = 1; attempt <= 3; attempt++) {
+                rawTexts = fetchRecentTexts(chatId, 50, &diag);
+                if (rawTexts.count >= 5) break;
+                if (attempt < 3) {
+                    updateProgress(attempt == 1
+                                   ? @"正在读取记录…首次未取到，稍后自动重试…"
+                                   : @"正在读取记录…再次重试中…");
+                    [NSThread sleepForTimeInterval:2.0]; // 后台线程，安全
+                }
             }
         }
         // 过滤噪音：只丢纯标点/单字语气词（哦、嗯、？）；
@@ -1728,15 +1744,29 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
                                  [NSCharacterSet whitespaceAndNewlineCharacterSet]];
             [AISettings setStyleProfile:profile forChat:chatId];
             NSLog(kAITweakLogPrefix "风格学习完成（%lu 条记录）: %@", (unsigned long)texts.count, chatId);
+            // 成功弹窗附带方向识别诊断，方便确认语料到底标没标对
+            NSString *dirNote = @"";
+            if ([diag containsString:@"实时标注"]) {
+                dirNote = @"方向识别：实时标注（准确）";
+            } else if ([diag containsString:@"方向"]) {
+                NSRange r = [diag rangeOfString:@"方向"];
+                NSString *tail = [diag substringFromIndex:NSMaxRange(r)];
+                NSRange slash = [tail rangeOfString:@"/"];
+                if (slash.location != NSNotFound) tail = [tail substringToIndex:slash.location];
+                dirNote = [NSString stringWithFormat:@"方向识别：%@", tail.length ? tail : @"无"];
+            } else {
+                dirNote = @"方向识别：无";
+            }
             NSString *suffix = hasLabels
                 ? @""
                 : @"\n\n⚠️ 记录未标注发送方，总结可能混合双方话术，建议在“查看/编辑档案”里手动修正。";
             finishLearning(@"学习完成",
                            [NSString stringWithFormat:
-                            @"已保存这个好友的风格档案，之后与 ta 的对话会用你的语气回复。\n\n档案摘要：\n%@",
+                            @"已保存这个好友的风格档案，之后与 ta 的对话会用你的语气回复。\n\n档案摘要：\n%@\n\n（%@）",
                             [NSString stringWithFormat:@"%@%@",
                              profile.length > 200 ? [profile substringToIndex:200] : profile,
-                             suffix]]);
+                             suffix],
+                            dirNote]);
         }];
     });
 }
