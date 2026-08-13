@@ -76,6 +76,7 @@
 @property (nonatomic) BOOL editingKey;               // 用户正在编辑 Key（编辑时才显示明文）
 @property (nonatomic, strong) NSString *pendingModel; // 页面里选中的模型（保存时才落盘）
 @property (nonatomic, strong) NSString *pendingMode;  // 页面里选中的回复模式（保存时才落盘）
+@property (nonatomic) BOOL activationPrompted;       // 本次进入是否已弹过激活窗
 @end
 
 @implementation AIPromptEditorViewController
@@ -153,7 +154,9 @@ static UITextField *makeRowField(NSString *placeholder) {
     self.enabledLabel = makeRowLabel(@"机器人开关");
     [self.switchCard addSubview:self.enabledLabel];
     self.enabledSwitch = [[UISwitch alloc] initWithFrame:CGRectZero];
-    self.enabledSwitch.on = [AISettings enabled];
+    // 未激活时主开关强制关闭且不可拨动；激活后恢复默认状态
+    self.enabledSwitch.on = [WeChatAIHandler isActivatedForCurrentAccount] && [AISettings enabled];
+    self.enabledSwitch.enabled = [WeChatAIHandler isActivatedForCurrentAccount];
     [self.switchCard addSubview:self.enabledSwitch];
 
     // 激活密钥（按微信账号区分：换号自动失效，防止多账号数据串用）
@@ -826,12 +829,38 @@ static UITextField *makeRowField(NSString *placeholder) {
 }
 
 - (void)activationTapped {
+    if (![WeChatAIHandler isActivatedForCurrentAccount]) {
+        [self showActivationPrompt];
+        return;
+    }
     NSString *usr = [WeChatAIHandler selfUsrName];
-    BOOL activated = [WeChatAIHandler isActivatedForCurrentAccount];
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"激活密钥"
-                                                                  message:activated
-        ? [NSString stringWithFormat:@"当前微信账号（%@）已激活。", usr]
-        : [NSString stringWithFormat:@"当前微信账号（%@）未激活。\n请输入激活密钥（仅本机门禁，不做远程验证）。", usr]
+                                                                  message:[NSString stringWithFormat:@"当前微信账号（%@）已激活。", usr]
+                                                           preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"停用本账号"
+                                             style:UIAlertActionStyleDestructive
+                                           handler:^(UIAlertAction *action) {
+        [AISettings deactivateAccount:usr];
+        [self refreshActivationLabel];
+        [self refreshEnabledSwitchForActivation];
+    }]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+
+- (void)viewDidAppear:(BOOL)animated {
+    [super viewDidAppear:animated];
+    // 进入设置页：未激活先弹激活窗，激活成功后才看到设置详情
+    if (![WeChatAIHandler isActivatedForCurrentAccount] && !self.activationPrompted) {
+        self.activationPrompted = YES;
+        [self showActivationPrompt];
+    }
+}
+
+- (void)showActivationPrompt {
+    if ([WeChatAIHandler isActivatedForCurrentAccount]) return;
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"输入激活密钥"
+                                                                  message:@"当前微信账号未激活，输入密钥后才能使用 AI 助手。"
                                                            preferredStyle:UIAlertControllerStyleAlert];
     [alert addTextFieldWithConfigurationHandler:^(UITextField *tf) {
         tf.placeholder = @"输入密钥";
@@ -839,43 +868,44 @@ static UITextField *makeRowField(NSString *placeholder) {
         tf.autocapitalizationType = UITextAutocapitalizationTypeNone;
         tf.autocorrectionType = UITextAutocorrectionTypeNo;
     }];
-    [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
-    if (!activated) {
-        [alert addAction:[UIAlertAction actionWithTitle:@"激活"
-                                                 style:UIAlertActionStyleDefault
-                                               handler:^(UIAlertAction *action) {
-            NSString *key = [alert.textFields.firstObject.text
-                             stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-            NSString *warnTitle = nil;
-            NSString *warnMsg = nil;
-            if (key.length == 0) {
-                warnTitle = @"密钥不能为空";
-                warnMsg = @"请输入激活密钥。";
-            } else if (![key isEqualToString:kAIActivationKey]) {
-                warnTitle = @"密钥错误";
-                warnMsg = @"输入的密钥不正确，请重试。";
-            }
-            if (warnTitle) {
-                UIAlertController *warn = [UIAlertController alertControllerWithTitle:warnTitle
-                                                                             message:warnMsg
-                                                                      preferredStyle:UIAlertControllerStyleAlert];
-                [warn addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
-                [self presentViewController:warn animated:YES completion:nil];
-                return;
-            }
-            [AISettings setActivationKey:key forAccount:usr];
-            [self refreshActivationLabel];
-        }]];
-    }
-    if (activated) {
-        [alert addAction:[UIAlertAction actionWithTitle:@"停用本账号"
-                                                 style:UIAlertActionStyleDestructive
-                                               handler:^(UIAlertAction *action) {
-            [AISettings deactivateAccount:usr];
-            [self refreshActivationLabel];
-        }]];
-    }
+    [alert addAction:[UIAlertAction actionWithTitle:@"取消"
+                                             style:UIAlertActionStyleCancel
+                                           handler:^(UIAlertAction *action) {
+        [self dismissOrPop]; // 不激活就不给看设置
+    }]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"确定"
+                                             style:UIAlertActionStyleDefault
+                                           handler:^(UIAlertAction *action) {
+        NSString *key = [alert.textFields.firstObject.text
+                         stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+        if (![key isEqualToString:kAIActivationKey]) {
+            UIAlertController *warn = [UIAlertController alertControllerWithTitle:@"密钥错误"
+                                                                         message:@"输入的密钥不正确，请重试。"
+                                                                  preferredStyle:UIAlertControllerStyleAlert];
+            [warn addAction:[UIAlertAction actionWithTitle:@"重新输入"
+                                                     style:UIAlertActionStyleDefault
+                                                   handler:^(UIAlertAction *a) {
+                [self showActivationPrompt];
+            }]];
+            [self presentViewController:warn animated:YES completion:nil];
+            return;
+        }
+        [AISettings setActivationKey:key forAccount:[WeChatAIHandler selfUsrName]];
+        [self refreshActivationLabel];
+        [self refreshEnabledSwitchForActivation];
+        UIAlertController *ok = [UIAlertController alertControllerWithTitle:@"激活成功"
+                                                                    message:@"已激活，现在可以正常使用 AI 助手了。"
+                                                             preferredStyle:UIAlertControllerStyleAlert];
+        [ok addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
+        [self presentViewController:ok animated:YES completion:nil];
+    }]];
     [self presentViewController:alert animated:YES completion:nil];
+}
+
+- (void)refreshEnabledSwitchForActivation {
+    BOOL activated = [WeChatAIHandler isActivatedForCurrentAccount];
+    self.enabledSwitch.enabled = activated;
+    self.enabledSwitch.on = activated && [AISettings enabled];
 }
 
 - (void)profileListTapped {
