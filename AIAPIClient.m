@@ -131,11 +131,12 @@ static NSArray<NSDictionary *> *aiParseFewShotSamples(NSString *samples, NSUInte
 
         NSHTTPURLResponse *http = (NSHTTPURLResponse *)response;
         NSLog(kAITweakLogPrefix "API HTTP 状态: %ld", (long)http.statusCode);
+        NSDictionary *json = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+        NSLog(kAITweakLogPrefix "API 响应: %@", json ?: @"（非JSON）");
         // HTTP 错误（401 Key 无效 / 402 余额不足 / 429 限流…）带状态码返回，便于弹窗精确提示
         if (http.statusCode >= 400) {
             NSString *errMsg = [NSString stringWithFormat:@"HTTP %ld", (long)http.statusCode];
-            NSDictionary *errJson = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
-            NSString *apiMsg = errJson[@"error"][@"message"];
+            NSString *apiMsg = json[@"error"][@"message"];
             if (apiMsg.length > 0) {
                 errMsg = [errMsg stringByAppendingFormat:@"：%@", apiMsg];
             }
@@ -145,10 +146,19 @@ static NSArray<NSDictionary *> *aiParseFewShotSamples(NSString *samples, NSUInte
             return;
         }
 
-        NSDictionary *json = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+        // 即使 HTTP 200，响应里带 error 也视为失败，优先显示可读的错误信息
+        NSString *apiErr = json[@"error"][@"message"];
+        if (apiErr.length > 0) {
+            NSString *errMsg = [NSString stringWithFormat:@"API 错误：%@", apiErr];
+            completion(nil, [NSError errorWithDomain:@"WeChatAI"
+                                                code:1
+                                            userInfo:@{NSLocalizedDescriptionKey: errMsg}]);
+            return;
+        }
         NSString *reply = json[@"choices"][0][@"message"][@"content"];
         if (reply.length == 0) {
-            NSString *message = [NSString stringWithFormat:@"API 返回异常: %@", json];
+            NSString *message = [NSString stringWithFormat:@"API 返回异常(HTTP %ld): %@",
+                                 (long)http.statusCode, json];
             completion(nil, [NSError errorWithDomain:@"WeChatAI"
                                                 code:1
                                             userInfo:@{NSLocalizedDescriptionKey: message}]);
