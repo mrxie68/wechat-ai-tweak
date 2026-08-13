@@ -1,6 +1,9 @@
 #import "AIProfileEditorViewController.h"
 #import "AISettings.h"
 
+@interface AIProfileEditorViewController () <UIGestureRecognizerDelegate>
+@end
+
 @implementation AIProfileEditorViewController {
     NSString *_chatId;
     NSString *_initialProfile;
@@ -56,6 +59,12 @@
     [super viewDidLoad];
     self.title = @"编辑档案";
     self.view.backgroundColor = [UIColor systemGroupedBackgroundColor];
+    // 点击空白处收起键盘
+    UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self
+                                                                         action:@selector(dismissKeyboard)];
+    tap.cancelsTouchesInView = NO;
+    tap.delegate = self;
+    [self.view addGestureRecognizer:tap];
     self.navigationItem.leftBarButtonItem = [[UIBarButtonItem alloc] initWithTitle:@"取消"
                                                                              style:UIBarButtonItemStylePlain
                                                                             target:self
@@ -198,6 +207,19 @@
 
 - (void)cancelTapped {
     [self dismissOrPop];
+}
+
+- (void)dismissKeyboard {
+    [self.view endEditing:YES];
+}
+
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer shouldReceiveTouch:(UITouch *)touch {
+    if ([touch.view isKindOfClass:[UITextField class]] ||
+        [touch.view isKindOfClass:[UITextView class]] ||
+        [touch.view isKindOfClass:[UIControl class]]) {
+        return NO;
+    }
+    return YES;
 }
 
 - (void)dismissOrPop {

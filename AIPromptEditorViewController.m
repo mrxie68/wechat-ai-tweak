@@ -12,7 +12,7 @@
 +(BOOL)isActivatedForCurrentAccount;
 @end
 
-@interface AIPromptEditorViewController () <UITextFieldDelegate>
+@interface AIPromptEditorViewController () <UITextFieldDelegate, UIGestureRecognizerDelegate>
 @property (nonatomic, strong) UIScrollView *scrollView;
 @property (nonatomic, strong) UIView *contentView;
 @property (nonatomic, strong) UIView *switchCard;
@@ -137,6 +137,13 @@ static UITextField *makeRowField(NSString *placeholder) {
     self.scrollView.alwaysBounceVertical = YES;
     self.scrollView.keyboardDismissMode = UIScrollViewKeyboardDismissModeInteractive;
     [self.view addSubview:self.scrollView];
+
+    // 点击空白处收起键盘（点在输入框/按钮/开关上不触发）
+    UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self
+                                                                         action:@selector(dismissKeyboard)];
+    tap.cancelsTouchesInView = NO;
+    tap.delegate = self;
+    [self.view addGestureRecognizer:tap];
 
     self.contentView = [[UIView alloc] initWithFrame:CGRectZero];
     [self.scrollView addSubview:self.contentView];
@@ -801,6 +808,19 @@ static UITextField *makeRowField(NSString *placeholder) {
 
 - (void)cancelTapped {
     [self dismissOrPop];
+}
+
+- (void)dismissKeyboard {
+    [self.view endEditing:YES];
+}
+
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer shouldReceiveTouch:(UITouch *)touch {
+    if ([touch.view isKindOfClass:[UITextField class]] ||
+        [touch.view isKindOfClass:[UITextView class]] ||
+        [touch.view isKindOfClass:[UIControl class]]) {
+        return NO;
+    }
+    return YES;
 }
 
 - (void)saveTapped {
