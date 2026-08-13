@@ -823,6 +823,7 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
 + (BOOL)shouldRetryError:(NSError *)error {
     if (!error) return NO;
     NSInteger code = error.code;
+    if (code == 1) return YES; // 空响应（无文本内容），重试可能拿到正常结果
     if (code == 429 || code == 500 || code == 502 || code == 503 || code == 504) return YES;
     if (code == NSURLErrorTimedOut || code == NSURLErrorCannotConnectToHost ||
         code == NSURLErrorNetworkConnectionLost || code == NSURLErrorNotConnectedToInternet ||
@@ -1597,6 +1598,10 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
                 NSLog(kAITweakLogPrefix "学习风格失败(%.1f秒): %@",
                       CFAbsoluteTimeGetCurrent() - startTs, error);
                 NSString *desc = error.localizedDescription ?: @"未知错误";
+                NSString *raw = error.userInfo[@"rawResponse"] ?: @"";
+                if (raw.length > 0) {
+                    [[UIPasteboard generalPasteboard] setString:raw];
+                }
                 NSString *hint = @"";
                 if ([desc containsString:@"401"]) {
                     hint = @"\n大概率是 API Key 无效，去 DeepSeek 后台检查。";
@@ -1607,8 +1612,9 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
                     hint = @"\n网络超时，检查网络后重试。";
                 }
                 finishLearning(@"学习失败",
-                               [NSString stringWithFormat:@"调用 DeepSeek 失败：%@%@",
-                                desc, hint]);
+                               [NSString stringWithFormat:@"调用 DeepSeek 失败：%@%@%@",
+                                desc, hint,
+                                raw.length > 0 ? @"\n\n完整响应已复制到剪贴板，直接粘贴发作者。" : @""]);
                 return;
             }
             NSLog(kAITweakLogPrefix "学习风格完成，API 耗时 %.1f 秒", CFAbsoluteTimeGetCurrent() - startTs);

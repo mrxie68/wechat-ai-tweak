@@ -151,17 +151,20 @@ static NSArray<NSDictionary *> *aiParseFewShotSamples(NSString *samples, NSUInte
         if (apiErr.length > 0) {
             NSString *errMsg = [NSString stringWithFormat:@"API 错误：%@", apiErr];
             completion(nil, [NSError errorWithDomain:@"WeChatAI"
-                                                code:1
+                                                code:2
                                             userInfo:@{NSLocalizedDescriptionKey: errMsg}]);
             return;
         }
         NSString *reply = json[@"choices"][0][@"message"][@"content"];
         if (reply.length == 0) {
-            NSString *message = [NSString stringWithFormat:@"API 返回异常(HTTP %ld): %@",
-                                 (long)http.statusCode, json];
+            NSString *message = [NSString stringWithFormat:@"API 返回异常(HTTP %ld)，响应没有文本内容",
+                                 (long)http.statusCode];
             completion(nil, [NSError errorWithDomain:@"WeChatAI"
                                                 code:1
-                                            userInfo:@{NSLocalizedDescriptionKey: message}]);
+                                            userInfo:@{
+                                                NSLocalizedDescriptionKey: message,
+                                                @"rawResponse": json ?: @"",
+                                            }]);
             return;
         }
         completion(reply, nil);
