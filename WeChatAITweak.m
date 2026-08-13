@@ -1508,7 +1508,7 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
                 // 转圈居中在弹窗底部，消息下方留空行，避免和文字挤在一起
                 [spinner.centerXAnchor constraintEqualToAnchor:progressAlert.view.centerXAnchor].active = YES;
                 [spinner.bottomAnchor constraintEqualToAnchor:progressAlert.view.bottomAnchor
-                                                     constant:-18].active = YES;
+                                                     constant:-72].active = YES; // 抬到“取消学习”按钮上方
                 // 取消学习：立即关弹窗、停计时、忽略后续结果
                 [progressAlert addAction:[UIAlertAction actionWithTitle:@"取消学习"
                                                                   style:UIAlertActionStyleCancel
