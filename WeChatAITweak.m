@@ -1544,6 +1544,18 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
     // 阶段 1：读取最近记录（放后台，避免卡界面）
     updateProgress(@"正在读取最近 50 条聊天记录…");
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        // 刚启动微信时账号可能还没就绪：轮询等待 wechatSelfUsrName 非空（最多 5 秒），
+        // 否则第一次点学习会因账号未锁定而读错 Key/数据库目录，重试才成功
+        NSString *selfUsr = @"";
+        for (NSInteger i = 0; i < 10; i++) {
+            selfUsr = wechatSelfUsrName();
+            if (selfUsr.length > 0) break;
+            [NSThread sleepForTimeInterval:0.5];
+        }
+        if (selfUsr.length > 0) {
+            [AISettings setCurrentAccount:selfUsr];
+        }
+
         NSString *diag = @"";
         // 刚进微信时数据库可能还在初始化/被锁，首次取不到就自动重试（最多 3 次），
         // 不用用户手动取消再点一次
