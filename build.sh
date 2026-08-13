@@ -20,7 +20,7 @@ clang \
   -framework Security \
   -lsqlite3 \
   -o wechat-ai.dylib \
-  AIContext.m AIAPIClient.m AISettings.m AIPromptEditorViewController.m AIProfileListViewController.m WeChatAITweak.m
+  AIContext.m AIAPIClient.m AISettings.m AIPromptEditorViewController.m AIProfileListViewController.m AIProfileEditorViewController.m WeChatAITweak.m
 
 # 打一个 ad-hoc 签名，不影响 TrollFools/越狱使用
 codesign -f -s - wechat-ai.dylib || true

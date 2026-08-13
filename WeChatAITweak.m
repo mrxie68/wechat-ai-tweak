@@ -21,6 +21,7 @@
 #import "AIAPIClient.h"
 #import "AISettings.h"
 #import "AIPromptEditorViewController.h"
+#import "AIProfileEditorViewController.h"
 
 #pragma mark - 微信私有接口声明（class-dump 常见签名）
 
@@ -1356,6 +1357,14 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
             [self learnStyleForChat:chatId];
         }]];
         if (profile.length > 0) {
+            [alert addAction:[UIAlertAction actionWithTitle:@"查看/编辑档案"
+                                                     style:UIAlertActionStyleDefault
+                                                   handler:^(UIAlertAction *action) {
+                AIProfileEditorViewController *editor =
+                    [[AIProfileEditorViewController alloc] initWithChatId:chatId profile:profile];
+                UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:editor];
+                [top presentViewController:nav animated:YES completion:nil];
+            }]];
             [alert addAction:[UIAlertAction actionWithTitle:@"清除档案"
                                                      style:UIAlertActionStyleDestructive
                                                    handler:^(UIAlertAction *action) {

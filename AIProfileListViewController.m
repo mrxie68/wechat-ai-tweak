@@ -1,5 +1,6 @@
 #import "AIProfileListViewController.h"
 #import "AISettings.h"
+#import "AIProfileEditorViewController.h"
 
 @implementation AIProfileListViewController
 
@@ -49,6 +50,18 @@
 
 - (BOOL)tableView:(UITableView *)tableView canEditRowAtIndexPath:(NSIndexPath *)indexPath {
     return YES;
+}
+
+- (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
+    [tableView deselectRowAtIndexPath:indexPath animated:YES];
+    NSArray *profiles = [AISettings allStyleProfiles];
+    if (indexPath.row < profiles.count) {
+        NSDictionary *item = profiles[indexPath.row];
+        AIProfileEditorViewController *editor =
+            [[AIProfileEditorViewController alloc] initWithChatId:item[@"chatId"]
+                                                          profile:item[@"profile"]];
+        [self.navigationController pushViewController:editor animated:YES];
+    }
 }
 
 - (void)tableView:(UITableView *)tableView commitEditingStyle:(UITableViewCellEditingStyle)editingStyle
