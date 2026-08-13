@@ -1641,7 +1641,7 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
                 }
                 NSString *hint = @"";
                 if ([desc containsString:@"401"]) {
-                    hint = @"\n大概率是 API Key 无效，去 DeepSeek 后台检查。";
+                    hint = @"\n大概率是 API Key 无效或当前账号没配置 Key，请去设置页重新填写并保存，或去 DeepSeek 后台检查。";
                 } else if ([desc containsString:@"402"] || [desc containsString:@"余额"] ||
                            [desc containsString:@"insufficient"]) {
                     hint = @"\n大概率是余额不足。";

@@ -345,10 +345,19 @@ static NSString *g_currentAccount = nil;
 }
 
 + (NSString *)apiKey {
-    // 1. Keychain 优先（加密存储，越狱/取证工具也读不到）
     NSString *acc = g_currentAccount.length > 0 ? g_currentAccount : @"deepseek";
+    // 1. 当前账号的 Keychain 槽位
     NSString *kc = [self keychainApiKeyForAccount:acc];
     if (kc.length > 0) return kc;
+    // 2. 兜底：老版全局 “deepseek” 槽位还有 Key → 迁到当前账号再用
+    NSString *legacy = [self keychainApiKeyForAccount:@"deepseek"];
+    if (legacy.length > 0) {
+        if (g_currentAccount.length > 0) {
+            [self setKeychainApiKey:legacy forAccount:g_currentAccount];
+            [self deleteKeychainApiKeyForAccount:@"deepseek"];
+        }
+        return legacy;
+    }
     // 2. 旧版 NSUserDefaults 迁移：读一次就搬进 Keychain 并清掉明文
     NSString *stored = [[NSUserDefaults standardUserDefaults] stringForKey:kAISettingsAPIKeyKey];
     if (stored.length > 0) {
