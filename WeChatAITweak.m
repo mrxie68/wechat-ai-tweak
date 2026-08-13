@@ -1204,6 +1204,12 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
 // 聊天信息页“AI 助手”开关被拨动
 + (void)aiSwitchChanged:(UISwitch *)sender {
     NSString *chatId = objc_getAssociatedObject(sender, &kAISwitchChatKey);
+    if (sender.on && ![self isActivatedForCurrentAccount]) {
+        sender.on = NO; // 未激活账号不允许打开
+        [self presentAlertWithTitle:@"当前账号未激活"
+                            message:@"请先在设置页输入激活密钥，激活后才能打开 AI 助手。"];
+        return;
+    }
     if (chatId.length > 0) {
         [AISettings setChatEnabled:sender.on chatId:chatId];
         NSLog(kAITweakLogPrefix "会话开关：%@ -> %@", chatId, sender.on ? @"开" : @"关");

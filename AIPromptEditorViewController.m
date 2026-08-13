@@ -535,6 +535,14 @@ static UITextField *makeRowField(NSString *placeholder) {
 
 // AI 状态里的“测试对话”：走真实的 DeepSeek 请求，验证 Key/模型/参数/Few-Shot/网络全链路
 - (void)runTestConversation {
+    if (![WeChatAIHandler isActivatedForCurrentAccount]) {
+        UIAlertController *warn = [UIAlertController alertControllerWithTitle:@"当前账号未激活"
+                                                                     message:@"请先在设置页输入激活密钥，激活后才能测试对话。"
+                                                              preferredStyle:UIAlertControllerStyleAlert];
+        [warn addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
+        [self presentViewController:warn animated:YES completion:nil];
+        return;
+    }
     if ([AISettings apiKey].length == 0) {
         UIAlertController *warn = [UIAlertController alertControllerWithTitle:@"未配置 API Key"
                                                                      message:@"请先在设置页的 API Key 一栏填入 DeepSeek Key 再测试。"

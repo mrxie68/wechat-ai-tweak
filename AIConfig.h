@@ -78,6 +78,6 @@
 #define kAITweakLogPrefix @"[WeChatAI] "
 
 // 插件版本（弹窗/状态命令会显示，方便确认手机上装的是不是最新编译）
-#define kAITweakVersion @"0.11.22"
+#define kAITweakVersion @"0.11.23"
 
 #endif
