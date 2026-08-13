@@ -80,7 +80,7 @@ static NSArray<NSDictionary *> *aiParseFewShotSamples(NSString *samples, NSUInte
     }
     if (userProfile.length > 0) {
         finalPrompt = [finalPrompt stringByAppendingFormat:
-            @"\n\n【关于我的基本信息，聊天时以此为准，没写到的信息一律不要编造】\n%@", userProfile];
+            @"\n\n【关于我本人（你扮演的人）的基本信息：这些只属于“我”，聊天时以此为准，绝不能安到对方头上；没写到的信息一律不要编造】\n%@", userProfile];
     }
     if (friendInfo.count > 0) {
         NSString *call = friendInfo[@"call"] ?: @"";
