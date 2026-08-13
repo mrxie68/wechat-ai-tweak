@@ -798,6 +798,7 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
          systemPrompt:(NSString *)systemPrompt
          styleProfile:(NSString *)styleProfile
          userProfile:(NSString *)userProfile
+         friendInfo:(NSDictionary *)friendInfo
           completion:(void (^)(NSString *reply, NSError *error))completion {
     __block void (^attemptBlock)(NSInteger) = nil;
     __weak void (^weakAttemptBlock)(NSInteger) = nil;
@@ -806,6 +807,7 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
                               systemPrompt:systemPrompt
                               styleProfile:styleProfile
                               userProfile:userProfile
+                              friendInfo:friendInfo
                               fewShotEnabled:YES
                                 completion:^(NSString *reply, NSError *error) {
             if (error && [self shouldRetryError:error] && attempt < 3) {
@@ -1024,6 +1026,7 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
                systemPrompt:kAISystemPrompt
                styleProfile:[AISettings styleProfileForChat:chatId]
                userProfile:[AISettings userProfile]
+               friendInfo:nil
                  completion:^(NSString *reply, NSError *error) {
             @synchronized (self) {
                 [g_inFlightChats removeObject:chatId];
@@ -1104,6 +1107,7 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
                systemPrompt:[AISettings autoSystemPrompt]
                styleProfile:[AISettings styleProfileForChat:chatId]
                userProfile:[AISettings userProfile]
+               friendInfo:[AISettings friendInfoForChat:chatId]
                  completion:^(NSString *reply, NSError *error) {
             @synchronized (self) {
                 [g_inFlightChats removeObject:chatId];
@@ -1528,6 +1532,7 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
                                   systemPrompt:learnPrompt
                                   styleProfile:nil
                                   userProfile:nil
+                                  friendInfo:nil
                                   fewShotEnabled:NO
                                     completion:^(NSString *reply, NSError *error) {
             if (error) {

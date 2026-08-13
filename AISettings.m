@@ -21,6 +21,7 @@ static NSString * const kAISettingsPresencePenaltyKey = @"WeChatAIPresencePenalt
 static NSString * const kAISettingsTypingSimulationKey = @"WeChatAITypingSimulation";
 static NSString * const kAISettingsChatOverridesKey = @"WeChatAIChatOverrides";
 static NSString * const kAISettingsProfilePrefix = @"WeChatAIStyleProfile_";
+static NSString * const kAISettingsFriendInfoPrefix = @"WeChatAIFriendInfo_";
 
 static NSString *g_currentAccount = nil;
 
@@ -57,6 +58,16 @@ static NSString *g_currentAccount = nil;
     @synchronized (self) {
         if (g_currentAccount.length == 0) return kAISettingsProfilePrefix;
         return [NSString stringWithFormat:@"%@%@_", kAISettingsProfilePrefix, g_currentAccount];
+    }
+}
+
++(NSString *)friendInfoKeyForChatId:(NSString *)chatId {
+    @synchronized (self) {
+        if (g_currentAccount.length == 0) {
+            return [kAISettingsFriendInfoPrefix stringByAppendingString:chatId];
+        }
+        return [NSString stringWithFormat:@"%@%@_%@",
+                kAISettingsFriendInfoPrefix, g_currentAccount, chatId];
     }
 }
 
@@ -230,6 +241,25 @@ static NSString *g_currentAccount = nil;
         return [a[@"chatId"] compare:b[@"chatId"]];
     }];
     return profiles;
+}
+
++(NSDictionary *)friendInfoForChat:(NSString *)chatId {
+    if (chatId.length == 0) return @{};
+    NSDictionary *info = [[NSUserDefaults standardUserDefaults]
+                          dictionaryForKey:[self friendInfoKeyForChatId:chatId]];
+    return info ?: @{};
+}
+
++(void)setFriendInfo:(NSDictionary *)info forChat:(NSString *)chatId {
+    if (chatId.length == 0) return;
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    NSString *key = [self friendInfoKeyForChatId:chatId];
+    if (info.count > 0) {
+        [defaults setObject:info forKey:key];
+    } else {
+        [defaults removeObjectForKey:key];
+    }
+    [defaults synchronize];
 }
 
 + (NSString *)apiKey {

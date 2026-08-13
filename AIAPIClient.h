@@ -12,6 +12,7 @@
          systemPrompt:(NSString *)systemPrompt
          styleProfile:(NSString *)styleProfile
          userProfile:(NSString *)userProfile
+         friendInfo:(NSDictionary *)friendInfo
          fewShotEnabled:(BOOL)fewShotEnabled
           completion:(void (^)(NSString *reply, NSError *error))completion;
 

@@ -50,6 +50,7 @@ static NSArray<NSDictionary *> *aiParseFewShotSamples(NSString *samples, NSUInte
          systemPrompt:(NSString *)systemPrompt
          styleProfile:(NSString *)styleProfile
          userProfile:(NSString *)userProfile
+         friendInfo:(NSDictionary *)friendInfo
          fewShotEnabled:(BOOL)fewShotEnabled
           completion:(void (^)(NSString *, NSError *))completion {
 
@@ -80,6 +81,16 @@ static NSArray<NSDictionary *> *aiParseFewShotSamples(NSString *samples, NSUInte
     if (userProfile.length > 0) {
         finalPrompt = [finalPrompt stringByAppendingFormat:
             @"\n\n【关于我的基本信息，聊天时以此为准，没写到的信息一律不要编造】\n%@", userProfile];
+    }
+    if (friendInfo.count > 0) {
+        NSString *rel = friendInfo[@"relation"] ?: @"";
+        NSString *fav = friendInfo[@"favor"] ?: @"";
+        NSString *note = friendInfo[@"note"] ?: @"";
+        NSMutableString *fi = [NSMutableString stringWithString:@"\n\n【关于这位好友，决定说话的语气和分寸】"];
+        if (rel.length > 0) [fi appendFormat:@"\n关系：%@", rel];
+        if (fav.length > 0) [fi appendFormat:@"\n好感度：%@", fav];
+        if (note.length > 0) [fi appendFormat:@"\n备注：%@", note];
+        finalPrompt = [finalPrompt stringByAppendingString:fi];
     }
     if (finalPrompt.length > 0) {
         [payload addObject:@{@"role": @"system", @"content": finalPrompt}];

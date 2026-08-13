@@ -18,6 +18,8 @@
 +(void)clearAllStyleProfiles;           // 清掉所有好友的学习档案（设置页“清空全部记忆”用）
 + (NSInteger)styleProfileCount;        // 已学习的好友数量（状态里显示）
 +(NSArray<NSDictionary *> *)allStyleProfiles;  // 全部学习档案 [{chatId, profile}]，按 chatId 排序
++(NSDictionary *)friendInfoForChat:(NSString *)chatId;  // 对方信息 {relation, favor, note}
++(void)setFriendInfo:(NSDictionary *)info forChat:(NSString *)chatId;
 + (NSString *)apiKey;                  // 同理
 + (void)setApiKey:(NSString *)key;
 + (NSString *)model;
