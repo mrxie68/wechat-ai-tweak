@@ -352,6 +352,7 @@ static NSArray<NSString *> *fetchRecentTextsFromDB(NSString *chatId, NSInteger l
     NSString *md5ChatTable = [@"Chat_" stringByAppendingString:aiMD5Hex(chatId)];
     NSInteger fileCount = 0, tableCount = 0, queryCount = 0;
     NSString *usedDirCol = @"";
+    NSString *usedTextCol = @"";
     NSArray *dbs = aiFindDatabaseFiles();
     for (NSDictionary *d in dbs) {
         NSString *full = d[@"path"];
@@ -398,6 +399,7 @@ static NSArray<NSString *> *fetchRecentTextsFromDB(NSString *chatId, NSInteger l
                 [texts addObjectsFromArray:rows];
                 if (texts.count > 0) {
                     usedDirCol = dirCol.length ? dirCol : @"无";
+                    usedTextCol = textCol ?: @"";
                     break;
                 }
             }
@@ -410,9 +412,10 @@ static NSArray<NSString *> *fetchRecentTextsFromDB(NSString *chatId, NSInteger l
         [texts removeObjectsInRange:NSMakeRange(0, texts.count - (NSUInteger)limit)];
     }
     if (dbDiag) {
-        *dbDiag = [NSString stringWithFormat:@"[文件%ld/消息表%ld/可查%ld/方向%@/行%lu]",
+        *dbDiag = [NSString stringWithFormat:@"[文件%ld/消息表%ld/可查%ld/方向%@/列%@/行%lu]",
                    (long)fileCount, (long)tableCount, (long)queryCount,
                    usedDirCol.length ? usedDirCol : (tableCount > 0 ? @"无" : @"未测"),
+                   usedTextCol.length ? usedTextCol : @"未测",
                    (unsigned long)texts.count];
     }
     // 查询是倒序（新的在前），反转成时间正序给 AI
@@ -1324,11 +1327,11 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
     updateProgress(@"正在读取最近 50 条聊天记录…");
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
         NSString *diag = @"";
-        NSArray *texts = fetchRecentTexts(chatId, 50, &diag);
+        NSArray *rawTexts = fetchRecentTexts(chatId, 50, &diag);
         // 过滤噪音：只丢纯标点/单字语气词（哦、嗯、？）；
         // “哈哈/嗯嗯/行行”这类 2 字风格词汇保留（它们是说话风格的一部分）
         NSMutableArray *filtered = [NSMutableArray array];
-        for (NSString *t in texts) {
+        for (NSString *t in rawTexts) {
             NSString *body = t;
             if ([body hasPrefix:@"我："]) body = [body substringFromIndex:2];
             else if ([body hasPrefix:@"对方："]) body = [body substringFromIndex:3];
@@ -1349,17 +1352,35 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
             }
             // 长度 <= 1：纯语气词/标点，丢弃
         }
-        texts = filtered;
+        NSArray *texts = filtered;
+        // 兜底：过滤太狠导致不足 5 条时，退回用原始语料（保证学习可用）
+        if (texts.count < 5 && rawTexts.count >= 5) {
+            NSLog(kAITweakLogPrefix "过滤后语料不足，回退用原始 %lu 条", (unsigned long)rawTexts.count);
+            texts = rawTexts;
+        }
         if (texts.count < 5) {
+            // 原始读取样本预览（最多 3 条，各截断 20 字），帮助定位读到的到底是什么
+            NSMutableArray *previews = [NSMutableArray array];
+            for (NSString *s in rawTexts) {
+                if (previews.count >= 3) break;
+                NSString *p = [s stringByReplacingOccurrencesOfString:@"\n" withString:@"⏎"];
+                if (p.length > 20) p = [p substringToIndex:20];
+                [previews addObject:[NSString stringWithFormat:@"%lu字:%@",
+                                     (unsigned long)s.length, p]];
+            }
+            NSString *previewLine = previews.count
+                ? [previews componentsJoinedByString:@" | "]
+                : @"（无样本）";
             // 汇总诊断：条数 + 接口诊断，直接复制到剪贴板，
             // 用户长按粘贴就能把日志发给作者排查。
             NSString *fullLog = [NSString stringWithFormat:
                 @"🤖 微信 AI v%@ 学习失败诊断\n"
                 @"会话：%@\n"
                 @"找到文字消息：%lu 条（至少需要 5 条）\n\n"
-                @"接口诊断：%@",
+                @"接口诊断：%@\n\n"
+                @"读取样本：%@",
                 kAITweakVersion, chatId, (unsigned long)texts.count,
-                diag.length ? diag : @"未知"];
+                diag.length ? diag : @"未知", previewLine];
             [[UIPasteboard generalPasteboard] setString:fullLog];
             finishLearning(@"记录太少（日志已复制）",
                            [NSString stringWithFormat:
