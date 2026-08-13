@@ -578,6 +578,7 @@ static UITextField *makeRowField(NSString *placeholder) {
                           systemPrompt:[AISettings autoSystemPrompt]
                           styleProfile:nil
                           userProfile:[AISettings userProfile]
+                          friendInfo:nil
                           fewShotEnabled:YES
                             completion:^(NSString *reply, NSError *error) {
         dispatch_async(dispatch_get_main_queue(), ^{

@@ -83,12 +83,16 @@ static NSArray<NSDictionary *> *aiParseFewShotSamples(NSString *samples, NSUInte
             @"\n\n【关于我的基本信息，聊天时以此为准，没写到的信息一律不要编造】\n%@", userProfile];
     }
     if (friendInfo.count > 0) {
+        NSString *call = friendInfo[@"call"] ?: @"";
         NSString *rel = friendInfo[@"relation"] ?: @"";
         NSString *fav = friendInfo[@"favor"] ?: @"";
+        NSString *basic = friendInfo[@"basic"] ?: @"";
         NSString *note = friendInfo[@"note"] ?: @"";
         NSMutableString *fi = [NSMutableString stringWithString:@"\n\n【关于这位好友，决定说话的语气和分寸】"];
+        if (call.length > 0) [fi appendFormat:@"\n称呼：%@", call];
         if (rel.length > 0) [fi appendFormat:@"\n关系：%@", rel];
         if (fav.length > 0) [fi appendFormat:@"\n好感度：%@", fav];
+        if (basic.length > 0) [fi appendFormat:@"\n基本情况：%@", basic];
         if (note.length > 0) [fi appendFormat:@"\n备注：%@", note];
         finalPrompt = [finalPrompt stringByAppendingString:fi];
     }
