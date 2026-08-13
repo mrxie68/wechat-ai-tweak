@@ -3,6 +3,7 @@
 #import "AIConfig.h"
 #import "AIContext.h"
 #import "AIAPIClient.h"
+#import "AIProfileListViewController.h"
 
 // 状态字符串由 WeChatAIHandler 提供（同一个 dylib 内，无需头文件）
 @interface WeChatAIHandler : NSObject
@@ -18,9 +19,17 @@
 @property (nonatomic, strong) UIView *statusCard;
 @property (nonatomic, strong) UILabel *statusLabel;
 @property (nonatomic, strong) UILabel *statusValueLabel;
+@property (nonatomic, strong) UIView *profileListCard;
+@property (nonatomic, strong) UILabel *profileListLabel;
+@property (nonatomic, strong) UILabel *profileListValueLabel;
 @property (nonatomic, strong) UIView *modeCard;
 @property (nonatomic, strong) UILabel *modeLabel;
 @property (nonatomic, strong) UILabel *modeValueLabel;
+@property (nonatomic, strong) UIView *behaviorCard;
+@property (nonatomic, strong) UILabel *groupLabel;
+@property (nonatomic, strong) UISwitch *groupSwitch;
+@property (nonatomic, strong) UILabel *stickerLabel;
+@property (nonatomic, strong) UISwitch *stickerSwitch;
 @property (nonatomic, strong) UIView *keyCard;
 @property (nonatomic, strong) UILabel *keyLabel;
 @property (nonatomic, strong) UITextField *apiKeyField;
@@ -154,6 +163,19 @@ static UITextField *makeRowField(NSString *placeholder) {
     [self.statusCard addGestureRecognizer:[[UITapGestureRecognizer alloc]
                                            initWithTarget:self action:@selector(statusTapped)]];
 
+    // 学习档案（二级入口：查看/删除已学习的好友档案）
+    self.profileListCard = makeCard();
+    [self.contentView addSubview:self.profileListCard];
+    self.profileListLabel = makeRowLabel(@"学习档案");
+    [self.profileListCard addSubview:self.profileListLabel];
+    self.profileListValueLabel = makeValueLabel();
+    self.profileListValueLabel.text = [NSString stringWithFormat:@"%ld ›",
+                                       (long)[AISettings styleProfileCount]];
+    [self.profileListCard addSubview:self.profileListValueLabel];
+    self.profileListCard.userInteractionEnabled = YES;
+    [self.profileListCard addGestureRecognizer:[[UITapGestureRecognizer alloc]
+                                                initWithTarget:self action:@selector(profileListTapped)]];
+
     // 回复模式
     self.modeCard = makeCard();
     [self.contentView addSubview:self.modeCard];
@@ -166,6 +188,20 @@ static UITextField *makeRowField(NSString *placeholder) {
     self.modeCard.userInteractionEnabled = YES;
     [self.modeCard addGestureRecognizer:[[UITapGestureRecognizer alloc]
                                          initWithTarget:self action:@selector(modeTapped)]];
+
+    // 回复行为：群聊只回提问 + 表情包轻回复
+    self.behaviorCard = makeCard();
+    [self.contentView addSubview:self.behaviorCard];
+    self.groupLabel = makeRowLabel(@"群聊只回提问");
+    [self.behaviorCard addSubview:self.groupLabel];
+    self.groupSwitch = [[UISwitch alloc] initWithFrame:CGRectZero];
+    self.groupSwitch.on = [AISettings groupQuestionOnly];
+    [self.behaviorCard addSubview:self.groupSwitch];
+    self.stickerLabel = makeRowLabel(@"表情包轻回复");
+    [self.behaviorCard addSubview:self.stickerLabel];
+    self.stickerSwitch = [[UISwitch alloc] initWithFrame:CGRectZero];
+    self.stickerSwitch.on = [AISettings stickerLightReply];
+    [self.behaviorCard addSubview:self.stickerSwitch];
 
     // API Key（掩码显示，编辑时才显示明文）
     self.keyCard = makeCard();
@@ -353,8 +389,12 @@ static UITextField *makeRowField(NSString *placeholder) {
 
     self.statusCard.frame = CGRectMake(margin, y, cardWidth, rowHeight);
     y += rowHeight + gap;
+    self.profileListCard.frame = CGRectMake(margin, y, cardWidth, rowHeight);
+    y += rowHeight + gap;
     self.modeCard.frame = CGRectMake(margin, y, cardWidth, rowHeight);
     y += rowHeight + gap;
+    self.behaviorCard.frame = CGRectMake(margin, y, cardWidth, rowHeight * 2);
+    y += rowHeight * 2 + gap;
     self.keyCard.frame = CGRectMake(margin, y, cardWidth, rowHeight);
     y += rowHeight + gap;
     self.modelCard.frame = CGRectMake(margin, y, cardWidth, rowHeight);
@@ -387,8 +427,16 @@ static UITextField *makeRowField(NSString *placeholder) {
     self.statusLabel.frame = CGRectMake(16, 0, 200, rowHeight);
     self.statusValueLabel.frame = CGRectMake(cardWidth - 50, 0, 30, rowHeight);
 
+    self.profileListLabel.frame = CGRectMake(16, 0, 200, rowHeight);
+    self.profileListValueLabel.frame = CGRectMake(cardWidth - 50, 0, 30, rowHeight);
+
     self.modeLabel.frame = CGRectMake(16, 0, 110, rowHeight);
     self.modeValueLabel.frame = CGRectMake(130, 0, cardWidth - 130 - 14, rowHeight);
+
+    self.groupLabel.frame = CGRectMake(16, 0, 200, rowHeight);
+    self.groupSwitch.frame = CGRectMake(cardWidth - 60 - 14, 9, 60, 30);
+    self.stickerLabel.frame = CGRectMake(16, rowHeight, 200, rowHeight);
+    self.stickerSwitch.frame = CGRectMake(cardWidth - 60 - 14, rowHeight + 9, 60, 30);
 
     [self layoutLabel:self.keyLabel field:self.apiKeyField cardWidth:cardWidth];
 
@@ -694,6 +742,8 @@ static UITextField *makeRowField(NSString *placeholder) {
     double pres = [self.presField.text doubleValue];
     [AISettings setPresencePenalty:(pres >= 0 && pres <= 2) ? pres : kAIRequestPresencePenalty];
     [AISettings setTypingSimulation:self.typingSwitch.on];
+    [AISettings setGroupQuestionOnly:self.groupSwitch.on];
+    [AISettings setStickerLightReply:self.stickerSwitch.on];
     [AISettings setAutoSystemPrompt:self.textView.text];
     [AISettings setStyleSamples:self.styleView.text];
     [AISettings setUserProfile:self.profileView.text];
@@ -714,6 +764,8 @@ static UITextField *makeRowField(NSString *placeholder) {
     self.freqField.text = [NSString stringWithFormat:@"%.2f", kAIRequestFrequencyPenalty];
     self.presField.text = [NSString stringWithFormat:@"%.2f", kAIRequestPresencePenalty];
     self.typingSwitch.on = YES;
+    self.groupSwitch.on = YES;
+    self.stickerSwitch.on = NO;
     self.textView.text = kAIAutoSystemPrompt;
     self.styleView.text = kAIStyleSamplesDefault;
     self.profileView.text = kAIUserProfile;
@@ -729,6 +781,22 @@ static UITextField *makeRowField(NSString *placeholder) {
 
 - (void)resetProfileTapped {
     self.profileView.text = kAIUserProfile;
+}
+
+- (void)viewWillAppear:(BOOL)animated {
+    [super viewWillAppear:animated];
+    self.profileListValueLabel.text = [NSString stringWithFormat:@"%ld ›",
+                                       (long)[AISettings styleProfileCount]];
+}
+
+- (void)profileListTapped {
+    AIProfileListViewController *list = [[AIProfileListViewController alloc] init];
+    if (self.navigationController) {
+        [self.navigationController pushViewController:list animated:YES];
+    } else {
+        UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:list];
+        [self presentViewController:nav animated:YES completion:nil];
+    }
 }
 
 @end

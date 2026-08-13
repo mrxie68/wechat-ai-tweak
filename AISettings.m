@@ -1,5 +1,8 @@
 #import "AISettings.h"
 #import "AIConfig.h"
+#import <Security/Security.h>
+
+static NSString * const kAIKeychainService = @"com.wechat-ai.deepseek-key";
 
 static NSString * const kAISettingsAutoPromptKey = @"WeChatAIAutoSystemPrompt";
 static NSString * const kAISettingsStyleSamplesKey = @"WeChatAIStyleSamples";
@@ -8,6 +11,8 @@ static NSString * const kAISettingsAPIKeyKey = @"WeChatAIAPIKey";
 static NSString * const kAISettingsModelKey = @"WeChatAIModel";
 static NSString * const kAISettingsReplyModeKey = @"WeChatAIReplyMode";
 static NSString * const kAISettingsEnabledKey = @"WeChatAIEnabled";
+static NSString * const kAISettingsGroupQuestionOnlyKey = @"WeChatAIGroupQuestionOnly";
+static NSString * const kAISettingsStickerLightReplyKey = @"WeChatAIStickerLightReply";
 static NSString * const kAISettingsReplyDelayKey = @"WeChatAIReplyDelay";
 static NSString * const kAISettingsTemperatureKey = @"WeChatAITemperature";
 static NSString * const kAISettingsFrequencyPenaltyKey = @"WeChatAIFrequencyPenalty";
@@ -114,20 +119,96 @@ static NSString * const kAISettingsChatOverridesKey = @"WeChatAIChatOverrides";
     return count;
 }
 
++(NSArray<NSDictionary *> *)allStyleProfiles {
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    NSDictionary *all = [defaults dictionaryRepresentation];
+    NSMutableArray *profiles = [NSMutableArray array];
+    NSString *prefix = @"WeChatAIStyleProfile_";
+    for (NSString *key in all) {
+        if ([key hasPrefix:prefix]) {
+            NSString *chatId = [key substringFromIndex:prefix.length];
+            id profile = all[key];
+            if (chatId.length > 0 && [profile isKindOfClass:[NSString class]] &&
+                ((NSString *)profile).length > 0) {
+                [profiles addObject:@{@"chatId": chatId, @"profile": profile}];
+            }
+        }
+    }
+    [profiles sortUsingComparator:^NSComparisonResult(id a, id b) {
+        return [a[@"chatId"] compare:b[@"chatId"]];
+    }];
+    return profiles;
+}
+
 + (NSString *)apiKey {
+    // 1. Keychain 优先（加密存储，越狱/取证工具也读不到）
+    NSString *kc = [self keychainApiKey];
+    if (kc.length > 0) return kc;
+    // 2. 旧版 NSUserDefaults 迁移：读一次就搬进 Keychain 并清掉明文
     NSString *stored = [[NSUserDefaults standardUserDefaults] stringForKey:kAISettingsAPIKeyKey];
-    if (stored.length > 0) return stored;
+    if (stored.length > 0) {
+        [self setApiKey:stored];
+        return stored;
+    }
     return kAIAPIKey;
 }
 
 + (void)setApiKey:(NSString *)key {
-    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
     if (key.length > 0) {
-        [defaults setObject:key forKey:kAISettingsAPIKeyKey];
+        [self setKeychainApiKey:key];
     } else {
-        [defaults removeObjectForKey:kAISettingsAPIKeyKey];
+        [self deleteKeychainApiKey];
     }
-    [defaults synchronize];
+    // 迁移后一律清掉 NSUserDefaults 明文
+    [[NSUserDefaults standardUserDefaults] removeObjectForKey:kAISettingsAPIKeyKey];
+    [[NSUserDefaults standardUserDefaults] synchronize];
+}
+
++ (NSString *)keychainApiKey {
+    NSDictionary *query = @{
+        (__bridge id)kSecClass: (__bridge id)kSecClassGenericPassword,
+        (__bridge id)kSecAttrService: kAIKeychainService,
+        (__bridge id)kSecAttrAccount: @"deepseek",
+        (__bridge id)kSecReturnData: @YES,
+        (__bridge id)kSecMatchLimit: (__bridge id)kSecMatchLimitOne,
+    };
+    CFTypeRef result = NULL;
+    OSStatus status = SecItemCopyMatching((__bridge CFDictionaryRef)query, &result);
+    if (status == errSecSuccess && result) {
+        NSData *data = (__bridge_transfer NSData *)result;
+        return [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+    }
+    return @"";
+}
+
++ (void)setKeychainApiKey:(NSString *)key {
+    NSData *data = [key dataUsingEncoding:NSUTF8StringEncoding];
+    NSDictionary *query = @{
+        (__bridge id)kSecClass: (__bridge id)kSecClassGenericPassword,
+        (__bridge id)kSecAttrService: kAIKeychainService,
+        (__bridge id)kSecAttrAccount: @"deepseek",
+    };
+    NSDictionary *attrs = @{
+        (__bridge id)kSecValueData: data,
+        (__bridge id)kSecAttrAccessible: (__bridge id)kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+    };
+    OSStatus status = SecItemCopyMatching((__bridge CFDictionaryRef)query, NULL);
+    if (status == errSecSuccess) {
+        SecItemUpdate((__bridge CFDictionaryRef)query, (__bridge CFDictionaryRef)attrs);
+    } else {
+        NSMutableDictionary *add = [query mutableCopy];
+        [add addEntriesFromDictionary:attrs];
+        SecItemAdd((__bridge CFDictionaryRef)add, NULL);
+    }
+}
+
++ (void)deleteKeychainApiKey {
+    NSDictionary *query = @{
+        (__bridge id)kSecClass: (__bridge id)kSecClassGenericPassword,
+        (__bridge id)kSecAttrService: kAIKeychainService,
+        (__bridge id)kSecAttrAccount: @"deepseek",
+    };
+    SecItemDelete((__bridge CFDictionaryRef)query);
 }
 
 + (NSString *)model {
@@ -178,6 +259,30 @@ static NSString * const kAISettingsChatOverridesKey = @"WeChatAIChatOverrides";
 + (void)setEnabled:(BOOL)enabled {
     NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
     [defaults setBool:enabled forKey:kAISettingsEnabledKey];
+    [defaults synchronize];
+}
+
++(BOOL)groupQuestionOnly {
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    if ([defaults objectForKey:kAISettingsGroupQuestionOnlyKey] == nil) return YES;
+    return [defaults boolForKey:kAISettingsGroupQuestionOnlyKey];
+}
+
++(void)setGroupQuestionOnly:(BOOL)value {
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    [defaults setBool:value forKey:kAISettingsGroupQuestionOnlyKey];
+    [defaults synchronize];
+}
+
++(BOOL)stickerLightReply {
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    if ([defaults objectForKey:kAISettingsStickerLightReplyKey] == nil) return NO;
+    return [defaults boolForKey:kAISettingsStickerLightReplyKey];
+}
+
++(void)setStickerLightReply:(BOOL)value {
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    [defaults setBool:value forKey:kAISettingsStickerLightReplyKey];
     [defaults synchronize];
 }
 

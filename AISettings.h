@@ -14,6 +14,7 @@
 + (void)clearStyleProfileForChat:(NSString *)chatId;
 +(void)clearAllStyleProfiles;           // 清掉所有好友的学习档案（设置页“清空全部记忆”用）
 + (NSInteger)styleProfileCount;        // 已学习的好友数量（状态里显示）
++(NSArray<NSDictionary *> *)allStyleProfiles;  // 全部学习档案 [{chatId, profile}]，按 chatId 排序
 + (NSString *)apiKey;                  // 同理
 + (void)setApiKey:(NSString *)key;
 + (NSString *)model;
@@ -22,6 +23,10 @@
 + (void)setReplyMode:(NSString *)mode;
 + (BOOL)enabled;                       // 机器人总开关（默认开）
 + (void)setEnabled:(BOOL)enabled;
++(BOOL)groupQuestionOnly;              // 群聊只回提问（默认开）
++(void)setGroupQuestionOnly:(BOOL)value;
++(BOOL)stickerLightReply;              // 表情包轻回复（默认关，测试用）
++(void)setStickerLightReply:(BOOL)value;
 + (double)replyDelay;                  // 思考延迟（秒）
 + (void)setReplyDelay:(double)delay;
 +(double)temperature;                  // 请求温度（默认 0.5）

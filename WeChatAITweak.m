@@ -619,6 +619,9 @@ static NSObject *g_replyLock = nil;
 static NSMutableSet *g_recentReplies = nil;
 static NSMutableArray *g_recentReplyOrder = nil;
 static BOOL g_aiSending = NO;  // 插件自己发消息期间为 YES，发送 hook 据此跳过（AI 回复发出前已记录）
+// 积压限流：记录每个会话最近消息到达时间，8 秒内 >=3 条视为积压（亮屏补回时防止连续回复刷屏）
+static NSObject *g_msgTimeLock = nil;
+static NSMutableDictionary *g_recentMsgTimes = nil;
 
 + (void)noteReplySent:(NSString *)text chatId:(NSString *)chatId {
     if (text.length == 0 || chatId.length == 0) return;
@@ -655,7 +658,32 @@ static BOOL g_aiSending = NO;  // 插件自己发消息期间为 YES，发送 ho
     if ([self isRecentReply:content chatId:chatId]) return; // 其他路径已记过
     [self noteReplySent:content chatId:chatId];
     [[AIContext shared] appendAssistant:content timestamp:timestamp chatId:chatId];
-    NSLog(kAITweakLogPrefix "记录手动发送(%@): %@", chatId, content);
+    NSLog(kAITweakLogPrefix "记录手动发送(%@)", chatId);
+}
+
+// 积压检测：记录消息到达时间，清理 8 秒前的旧记录
++ (void)noteMessageArrival:(NSString *)chatId {
+    @synchronized (g_msgTimeLock) {
+        if (!g_recentMsgTimes) g_recentMsgTimes = [NSMutableDictionary dictionary];
+        NSMutableArray *times = g_recentMsgTimes[chatId];
+        if (!times) {
+            times = [NSMutableArray array];
+            g_recentMsgTimes[chatId] = times;
+        }
+        NSTimeInterval now = [[NSDate date] timeIntervalSince1970];
+        [times addObject:@(now)];
+        while (times.count > 0 && now - [times.firstObject doubleValue] > 8.0) {
+            [times removeObjectAtIndex:0];
+        }
+        if (times.count > 20) [times removeObjectAtIndex:0];
+    }
+}
+
++ (BOOL)isBursting:(NSString *)chatId {
+    @synchronized (g_msgTimeLock) {
+        NSArray *times = g_recentMsgTimes[chatId];
+        return times.count >= 3;
+    }
 }
 
 // 暂时性错误才重试：网络超时/断连、429 限流、5xx 服务器抖动；
@@ -749,6 +777,9 @@ static BOOL g_aiSending = NO;  // 插件自己发消息期间为 YES，发送 ho
         // 只记一条占位符，让 AI 知道对方发过媒体但不编造看不到的内容
         if (msgType != 1) {
             [self recordMediaPlaceholder:msgType isSelf:isSelf timestamp:msgTime chatId:chatId];
+            if (msgType == 47 && !isSelf && [AISettings stickerLightReply]) {
+                [self maybeLightReplySticker:chatId];
+            }
             return;
         }
 
@@ -788,6 +819,9 @@ static BOOL g_aiSending = NO;  // 插件自己发消息期间为 YES，发送 ho
 
         // 自动模式：对方发消息 → 记入上下文 → 自动回复
         [[AIContext shared] appendUser:content timestamp:msgTime chatId:chatId];
+        if (isGroup && [AISettings groupQuestionOnly] && ![self looksLikeQuestion:content]) {
+            return; // 群聊只回提问：非提问消息只记上下文不回复
+        }
         [self enqueueReplyForChat:chatId message:content];
     } @catch (NSException *exception) {
         NSLog(kAITweakLogPrefix "处理消息异常: %@", exception);
@@ -820,6 +854,25 @@ static BOOL g_aiSending = NO;  // 插件自己发消息期间为 YES，发送 ho
         [[AIContext shared] appendUser:placeholder timestamp:timestamp chatId:chatId];
     }
     NSLog(kAITweakLogPrefix "记录媒体占位符(%@): %@", name, chatId);
+}
+
+// 表情包轻回复（设置里默认关）：朋友发表情包时回一句轻量话，更像真人
++ (void)maybeLightReplySticker:(NSString *)chatId {
+    if (![AISettings enabled] || !isAutoMode()) return;
+    if (![AISettings chatEnabled:chatId]) return;
+    @synchronized (self) {
+        if (!g_inFlightChats) g_inFlightChats = [NSMutableSet set];
+        if ([g_inFlightChats containsObject:chatId]) return; // 正在回复，不插嘴
+    }
+    static NSArray *lightReplies = @[@"哈哈", @"😂", @"笑死我了", @"哈哈哈哈哈"];
+    NSString *reply = lightReplies[arc4random_uniform((uint32_t)lightReplies.count)];
+    double wait = 1.2 + (double)(arc4random_uniform(15) / 10.0);
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(wait * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        if (![self shouldReplyInChat:chatId]) return;
+        [[AIContext shared] appendAssistant:reply timestamp:(NSTimeInterval)time(NULL) chatId:chatId];
+        [self sendReply:reply chatId:chatId];
+    });
 }
 
 + (void)handleTriggerMessage:(NSString *)content timestamp:(unsigned int)timestamp
@@ -883,11 +936,16 @@ static BOOL g_aiSending = NO;  // 插件自己发消息期间为 YES，发送 ho
 
 // 自动模式入口：消息先进上下文；已在回复中时，问题挂起等待补回，闲聊合并跳过
 + (void)enqueueReplyForChat:(NSString *)chatId message:(NSString *)content {
+    [self noteMessageArrival:chatId];
     @synchronized (self) {
         if (!g_inFlightChats) g_inFlightChats = [NSMutableSet set];
         if (!g_pendingChats) g_pendingChats = [NSMutableSet set];
         if ([g_inFlightChats containsObject:chatId]) {
-            if ([self looksLikeQuestion:content]) {
+            if ([self isBursting:chatId]) {
+                // 积压限流：只保留一次补回，避免亮屏后一口气回好几条
+                [g_pendingChats removeObject:chatId];
+                [g_pendingChats addObject:chatId];
+            } else if ([self looksLikeQuestion:content]) {
                 [g_pendingChats addObject:chatId];
             }
             return;
@@ -1911,6 +1969,7 @@ static void WeChatAIInit(void) {
     g_seenKeys = [NSMutableSet set];
     g_seenOrder = [NSMutableArray array];
     g_replyLock = [[NSObject alloc] init];
+    g_msgTimeLock = [[NSObject alloc] init];
 
     [[NSNotificationCenter defaultCenter] addObserverForName:@"UIApplicationDidFinishLaunchingNotification"
                                                       object:nil
