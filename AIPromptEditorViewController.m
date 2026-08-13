@@ -326,7 +326,7 @@ static UITextField *makeRowField(NSString *placeholder) {
     self.profileView.keyboardDismissMode = UIScrollViewKeyboardDismissModeInteractive;
     [self.profileCard addSubview:self.profileView];
     self.profileHint = [[UILabel alloc] initWithFrame:CGRectZero];
-    self.profileHint.text = @"填你的真实信息：称呼、在城里还是农村、工作、家里情况、爱吃/不吃啥、常去的地方等。AI 聊天只以此为准，没写的绝不编造。";
+    self.profileHint.text = @"填你的真实信息，越具体越有生活感：称呼、工作、最近在折腾什么（比如做图/养花/写代码）、爱吃/不吃啥、常去的地方等。AI 只以此为准，没写的绝不编造。";
     self.profileHint.font = [UIFont systemFontOfSize:12];
     self.profileHint.textColor = [UIColor secondaryLabelColor];
     [self.profileCard addSubview:self.profileHint];
