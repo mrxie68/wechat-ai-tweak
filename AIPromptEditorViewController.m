@@ -605,18 +605,15 @@ static UITextField *makeRowField(NSString *placeholder) {
     }
 
     UIAlertController *progress = [UIAlertController alertControllerWithTitle:@"正在测试对话"
-                                                                     message:@"正在连接 DeepSeek 验证配置…"
+                                                                     message:@"正在连接 DeepSeek 验证配置…\n\n"
                                                               preferredStyle:UIAlertControllerStyleAlert];
     UIActivityIndicatorView *spinner = [[UIActivityIndicatorView alloc]
                                         initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleMedium];
     spinner.translatesAutoresizingMaskIntoConstraints = NO;
     [spinner startAnimating];
     [progress.view addSubview:spinner];
-    NSDictionary *views = @{@"spinner": spinner};
-    [progress.view addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"V:[spinner]-16-|"
-                                                                         options:0 metrics:nil views:views]];
-    [progress.view addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"H:[spinner]-12-|"
-                                                                         options:0 metrics:nil views:views]];
+    [spinner.centerXAnchor constraintEqualToAnchor:progress.view.centerXAnchor].active = YES;
+    [spinner.bottomAnchor constraintEqualToAnchor:progress.view.bottomAnchor constant:-18].active = YES;
     [self presentViewController:progress animated:NO completion:nil];
 
     NSArray *history = @[@{@"role": @"user", @"content": @"在吗？测试一下，简单回一句就行。"}];
