@@ -391,10 +391,10 @@ static NSArray<NSString *> *aiQueryMessages(sqlite3 *db, NSString *table, NSStri
                                   [dirCol isEqualToString:@"MsgStatus"] ||
                                   [dirCol isEqualToString:@"msgStatus"];
                 if (statusLike) {
-                    // 微信 Status 语义：1=收到（对方），4/5=发出（我）；其他值不明，不标
-                    if (dirValue == 4 || dirValue == 5) {
+                    // 微信 Status 语义（实测校准）：1=发出（我），4/5=收到（对方）；其他值不明，不标
+                    if (dirValue == 1) {
                         [rows addObject:[@"我：" stringByAppendingString:content]];
-                    } else if (dirValue == 1) {
+                    } else if (dirValue == 4 || dirValue == 5) {
                         [rows addObject:[@"对方：" stringByAppendingString:content]];
                     } else {
                         [rows addObject:content];
