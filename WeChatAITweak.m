@@ -653,6 +653,7 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
 // 回显稍后也会到达，靠“最近发送”缓存去重，不会记两遍。
 + (void)recordUserSentMessage:(NSString *)content chatId:(NSString *)chatId timestamp:(unsigned int)timestamp {
     if (content.length == 0 || chatId.length == 0) return;
+    if (![self isActivatedForCurrentAccount]) return;
     if (![AISettings enabled] || !isAutoMode()) return;
     if (!isChatAllowed(chatId)) return;
     if ([self isRecentReply:content chatId:chatId]) return; // 其他路径已记过
@@ -730,6 +731,18 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
     attemptBlock(1);
 }
 
+// 当前微信账号（切换账号后自动变化）
++ (NSString *)selfUsrName {
+    return wechatSelfUsrName();
+}
+
+// 激活密钥：未激活的账号一律不处理消息（本地密钥，无远程验证）
++ (BOOL)isActivatedForCurrentAccount {
+    NSString *usr = wechatSelfUsrName();
+    if (usr.length == 0) return NO; // 拿不到账号时保守关闭
+    return [AISettings isAccountActivated:usr];
+}
+
 // 账号隔离：检测到当前微信账号变化时清空全部上下文，避免把上一个账号的对话带过去
 + (void)syncContextAccount {
     NSString *usrName = wechatSelfUsrName();
@@ -746,6 +759,9 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
 + (void)handleIncomingMessage:(CMessageWrap *)wrap {
     @try {
         [self syncContextAccount];
+
+        // 激活密钥门禁：未激活的微信账号直接忽略，防止多账号数据串用
+        if (![self isActivatedForCurrentAccount]) return;
 
         if (![wrap isKindOfClass:NSClassFromString(@"CMessageWrap")]) return;
         unsigned int msgType = [wrap m_uiMessageType];
@@ -860,6 +876,7 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
 
 // 表情包轻回复（设置里默认关）：朋友发表情包时回一句轻量话，更像真人
 + (void)maybeLightReplySticker:(NSString *)chatId {
+    if (![self isActivatedForCurrentAccount]) return;
     if (![AISettings enabled] || !isAutoMode()) return;
     if (![AISettings chatEnabled:chatId]) return;
     @synchronized (self) {
@@ -1075,8 +1092,9 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
         : @"纯文本兜底";
 
     return [NSString stringWithFormat:
-        @"🤖 微信 AI v%@\n总开关：%@\n模式：%@\n模型：%@\n延迟：%.1f秒\nhook：收消息Async %@ / 收消息Ext %@ / 发送 %@\nwcplugins：%@\nAPI Key：%@\n白名单：%@\n风格样本：%@\n风格档案：%ld 个好友",
+        @"🤖 微信 AI v%@\n总开关：%@\n激活：%@\n模式：%@\n模型：%@\n延迟：%.1f秒\nhook：收消息Async %@ / 收消息Ext %@ / 发送 %@\nwcplugins：%@\nAPI Key：%@\n白名单：%@\n风格样本：%@\n风格档案：%ld 个好友",
         kAITweakVersion, [AISettings enabled] ? @"开" : @"关",
+        [self isActivatedForCurrentAccount] ? @"已激活" : @"未激活",
         mode, [AISettings model],
         [AISettings replyDelay],
         g_hookAsync ? @"✓" : @"✗",
@@ -1218,6 +1236,11 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
     dispatch_async(dispatch_get_main_queue(), ^{
         UIViewController *top = tweakTopViewController();
         if (!top) return;
+        if (![self isActivatedForCurrentAccount]) {
+            [self presentAlertWithTitle:@"未激活"
+                                message:@"当前微信账号未激活，请先在设置页输入激活密钥。"];
+            return;
+        }
 
         NSString *profile = [AISettings styleProfileForChat:chatId];
         UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"学习聊天风格"

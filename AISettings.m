@@ -11,6 +11,7 @@ static NSString * const kAISettingsAPIKeyKey = @"WeChatAIAPIKey";
 static NSString * const kAISettingsModelKey = @"WeChatAIModel";
 static NSString * const kAISettingsReplyModeKey = @"WeChatAIReplyMode";
 static NSString * const kAISettingsEnabledKey = @"WeChatAIEnabled";
+static NSString * const kAISettingsActivationPrefix = @"WeChatAIActivationKey_";
 static NSString * const kAISettingsGroupQuestionOnlyKey = @"WeChatAIGroupQuestionOnly";
 static NSString * const kAISettingsStickerLightReplyKey = @"WeChatAIStickerLightReply";
 static NSString * const kAISettingsReplyDelayKey = @"WeChatAIReplyDelay";
@@ -260,6 +261,29 @@ static NSString * const kAISettingsChatOverridesKey = @"WeChatAIChatOverrides";
     NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
     [defaults setBool:enabled forKey:kAISettingsEnabledKey];
     [defaults synchronize];
+}
+
++(BOOL)isAccountActivated:(NSString *)usrName {
+    if (usrName.length == 0) return NO;
+    NSString *stored = [[NSUserDefaults standardUserDefaults]
+                        stringForKey:[kAISettingsActivationPrefix stringByAppendingString:usrName]];
+    return stored.length > 0;
+}
+
++(void)setActivationKey:(NSString *)key forAccount:(NSString *)usrName {
+    if (usrName.length == 0) return;
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    NSString *storeKey = [kAISettingsActivationPrefix stringByAppendingString:usrName];
+    if (key.length > 0) {
+        [defaults setObject:key forKey:storeKey];
+    } else {
+        [defaults removeObjectForKey:storeKey];
+    }
+    [defaults synchronize];
+}
+
++(void)deactivateAccount:(NSString *)usrName {
+    [self setActivationKey:nil forAccount:usrName];
 }
 
 +(BOOL)groupQuestionOnly {

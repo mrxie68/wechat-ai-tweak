@@ -8,6 +8,8 @@
 // 状态字符串由 WeChatAIHandler 提供（同一个 dylib 内，无需头文件）
 @interface WeChatAIHandler : NSObject
 + (NSString *)statusString;
++(NSString *)selfUsrName;
++(BOOL)isActivatedForCurrentAccount;
 @end
 
 @interface AIPromptEditorViewController () <UITextFieldDelegate>
@@ -16,6 +18,9 @@
 @property (nonatomic, strong) UIView *switchCard;
 @property (nonatomic, strong) UILabel *enabledLabel;
 @property (nonatomic, strong) UISwitch *enabledSwitch;
+@property (nonatomic, strong) UIView *activationCard;
+@property (nonatomic, strong) UILabel *activationLabel;
+@property (nonatomic, strong) UILabel *activationValueLabel;
 @property (nonatomic, strong) UIView *statusCard;
 @property (nonatomic, strong) UILabel *statusLabel;
 @property (nonatomic, strong) UILabel *statusValueLabel;
@@ -150,6 +155,18 @@ static UITextField *makeRowField(NSString *placeholder) {
     self.enabledSwitch = [[UISwitch alloc] initWithFrame:CGRectZero];
     self.enabledSwitch.on = [AISettings enabled];
     [self.switchCard addSubview:self.enabledSwitch];
+
+    // 激活密钥（按微信账号区分：换号自动失效，防止多账号数据串用）
+    self.activationCard = makeCard();
+    [self.contentView addSubview:self.activationCard];
+    self.activationLabel = makeRowLabel(@"激活密钥");
+    [self.activationCard addSubview:self.activationLabel];
+    self.activationValueLabel = makeValueLabel();
+    [self.activationCard addSubview:self.activationValueLabel];
+    self.activationCard.userInteractionEnabled = YES;
+    [self.activationCard addGestureRecognizer:[[UITapGestureRecognizer alloc]
+                                               initWithTarget:self action:@selector(activationTapped)]];
+    [self refreshActivationLabel];
 
     // AI 状态（二级入口，点开弹窗展示运行状态）
     self.statusCard = makeCard();
@@ -387,6 +404,8 @@ static UITextField *makeRowField(NSString *placeholder) {
     self.switchCard.frame = CGRectMake(margin, y, cardWidth, 56);
     y += 56 + 12;
 
+    self.activationCard.frame = CGRectMake(margin, y, cardWidth, rowHeight);
+    y += rowHeight + gap;
     self.statusCard.frame = CGRectMake(margin, y, cardWidth, rowHeight);
     y += rowHeight + gap;
     self.profileListCard.frame = CGRectMake(margin, y, cardWidth, rowHeight);
@@ -423,6 +442,9 @@ static UITextField *makeRowField(NSString *placeholder) {
     // 卡片内部布局
     self.enabledLabel.frame = CGRectMake(16, 0, cardWidth - 90, 56);
     self.enabledSwitch.frame = CGRectMake(cardWidth - 60 - 14, 13, 60, 30);
+
+    self.activationLabel.frame = CGRectMake(16, 0, 200, rowHeight);
+    self.activationValueLabel.frame = CGRectMake(cardWidth - 90, 0, 70, rowHeight);
 
     self.statusLabel.frame = CGRectMake(16, 0, 200, rowHeight);
     self.statusValueLabel.frame = CGRectMake(cardWidth - 50, 0, 30, rowHeight);
@@ -787,6 +809,54 @@ static UITextField *makeRowField(NSString *placeholder) {
     [super viewWillAppear:animated];
     self.profileListValueLabel.text = [NSString stringWithFormat:@"%ld ›",
                                        (long)[AISettings styleProfileCount]];
+    [self refreshActivationLabel];
+}
+
+- (void)refreshActivationLabel {
+    self.activationValueLabel.text = [WeChatAIHandler isActivatedForCurrentAccount]
+        ? @"已激活 ›" : @"未激活 ›";
+}
+
+- (void)activationTapped {
+    NSString *usr = [WeChatAIHandler selfUsrName];
+    BOOL activated = [WeChatAIHandler isActivatedForCurrentAccount];
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"激活密钥"
+                                                                  message:activated
+        ? [NSString stringWithFormat:@"当前微信账号（%@）已激活。可以修改密钥，或停用本账号。", usr]
+        : [NSString stringWithFormat:@"当前微信账号（%@）未激活。\n输入一个密钥即可激活本账号（仅本机使用，不做远程验证）。", usr]
+                                                           preferredStyle:UIAlertControllerStyleAlert];
+    [alert addTextFieldWithConfigurationHandler:^(UITextField *tf) {
+        tf.placeholder = @"输入密钥";
+        tf.secureTextEntry = YES;
+        tf.autocapitalizationType = UITextAutocapitalizationTypeNone;
+        tf.autocorrectionType = UITextAutocorrectionTypeNo;
+    }];
+    [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+    [alert addAction:[UIAlertAction actionWithTitle:activated ? @"修改密钥" : @"激活"
+                                             style:UIAlertActionStyleDefault
+                                           handler:^(UIAlertAction *action) {
+        NSString *key = [alert.textFields.firstObject.text
+                         stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+        if (key.length == 0) {
+            UIAlertController *warn = [UIAlertController alertControllerWithTitle:@"密钥不能为空"
+                                                                         message:@"请输入一个至少 1 位的密钥。"
+                                                                  preferredStyle:UIAlertControllerStyleAlert];
+            [warn addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
+            [self presentViewController:warn animated:YES completion:nil];
+            return;
+        }
+        [AISettings setActivationKey:key forAccount:usr];
+        [self refreshActivationLabel];
+    }]];
+    if (activated) {
+        [alert addAction:[UIAlertAction actionWithTitle:@"停用本账号"
+                                                 style:UIAlertActionStyleDestructive
+                                               handler:^(UIAlertAction *action) {
+            [AISettings deactivateAccount:usr];
+            [self refreshActivationLabel];
+        }]];
+    }
+    [self presentViewController:alert animated:YES completion:nil];
 }
 
 - (void)profileListTapped {

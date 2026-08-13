@@ -23,6 +23,9 @@
 + (void)setReplyMode:(NSString *)mode;
 + (BOOL)enabled;                       // 机器人总开关（默认开）
 + (void)setEnabled:(BOOL)enabled;
++(BOOL)isAccountActivated:(NSString *)usrName;                    // 该微信账号是否已激活（本地密钥，无远程验证）
++(void)setActivationKey:(NSString *)key forAccount:(NSString *)usrName;  // 设置密钥=激活本账号
++(void)deactivateAccount:(NSString *)usrName;                     // 停用该账号（清除密钥）
 +(BOOL)groupQuestionOnly;              // 群聊只回提问（默认开）
 +(void)setGroupQuestionOnly:(BOOL)value;
 +(BOOL)stickerLightReply;              // 表情包轻回复（默认关，测试用）
