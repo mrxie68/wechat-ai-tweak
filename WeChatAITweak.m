@@ -501,7 +501,7 @@ static NSArray<NSString *> *fetchRecentTextsFromDB(NSString *chatId, NSInteger l
             if (db) sqlite3_close(db);
             continue;
         }
-        sqlite3_busy_timeout(db, 2000);
+        sqlite3_busy_timeout(db, 3000);
         fileCount++;
         NSArray *tables = aiSQLiteTableNames(db);
         for (NSString *tbl in tables) {
@@ -1545,7 +1545,19 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
     updateProgress(@"正在读取最近 50 条聊天记录…");
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
         NSString *diag = @"";
-        NSArray *rawTexts = fetchRecentTexts(chatId, 50, &diag);
+        // 刚进微信时数据库可能还在初始化/被锁，首次取不到就自动重试（最多 3 次），
+        // 不用用户手动取消再点一次
+        NSArray *rawTexts = nil;
+        for (NSInteger attempt = 1; attempt <= 3; attempt++) {
+            rawTexts = fetchRecentTexts(chatId, 50, &diag);
+            if (rawTexts.count >= 5) break;
+            if (attempt < 3) {
+                updateProgress(attempt == 1
+                               ? @"正在读取记录…首次未取到，稍后自动重试…"
+                               : @"正在读取记录…再次重试中…");
+                [NSThread sleepForTimeInterval:2.0]; // 后台线程，安全
+            }
+        }
         // 过滤噪音：只丢纯标点/单字语气词（哦、嗯、？）；
         // “哈哈/嗯嗯/行行”这类 2 字风格词汇保留（它们是说话风格的一部分）
         NSMutableArray *filtered = [NSMutableArray array];
