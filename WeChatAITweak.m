@@ -138,6 +138,21 @@ static BOOL isChatAllowed(NSString *chatId) {
     return NO;
 }
 
+// 压缩“哈哈哈哈哈哈…”这类重复字符刷屏：超过 20 字且单一字符占比 ≥70% 时截成前 6 字，
+// 防止几百个“哈”占满上下文和语料（意思不变，AI 照样看懂在笑）
+static NSString *aiCompressRepeatedText(NSString *text) {
+    if (text.length <= 20) return text;
+    unichar first = [text characterAtIndex:0];
+    NSInteger same = 0;
+    for (NSUInteger i = 0; i < text.length; i++) {
+        if ([text characterAtIndex:i] == first) same++;
+    }
+    if (same * 10 >= (NSInteger)text.length * 7) {
+        return [text substringToIndex:6];
+    }
+    return text;
+}
+
 // 回调式拉取历史消息的临时代理（实现多个候选回调名，看微信调哪个）
 @interface AIMessageFetcherDelegate : NSObject
 @property (nonatomic, strong) NSMutableArray<NSString *> *texts;
@@ -733,6 +748,7 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
     if (![self isActivatedForCurrentAccount]) return;
     if (![AISettings enabled] || !isAutoMode()) return;
     if (!isChatAllowed(chatId)) return;
+    content = aiCompressRepeatedText(content); // 手动发送同样压缩
     if ([self isRecentReply:content chatId:chatId]) return; // 其他路径已记过
     [self noteReplySent:content chatId:chatId];
     [[AIContext shared] appendAssistant:content timestamp:timestamp chatId:chatId];
@@ -880,6 +896,7 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
         }
 
         if (content.length == 0) return;
+        content = aiCompressRepeatedText(content); // 哈哈哈刷屏压缩，防上下文被占满
 
         // 自己发的消息：先识别 @AI 命令；不是命令则记进上下文（8.0.5x 没有发送 hook，靠回显记录）
         if (isSelf) {
@@ -1407,12 +1424,18 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
         NSMutableArray *filtered = [NSMutableArray array];
         for (NSString *t in rawTexts) {
             NSString *body = t;
-            if ([body hasPrefix:@"我："]) body = [body substringFromIndex:2];
-            else if ([body hasPrefix:@"对方："]) body = [body substringFromIndex:3];
-            body = [body stringByTrimmingCharactersInSet:
-                    [NSCharacterSet whitespaceAndNewlineCharacterSet]];
+            NSString *prefix = @"";
+            if ([body hasPrefix:@"我："]) {
+                prefix = @"我：";
+                body = [body substringFromIndex:2];
+            } else if ([body hasPrefix:@"对方："]) {
+                prefix = @"对方：";
+                body = [body substringFromIndex:3];
+            }
+            body = aiCompressRepeatedText([body stringByTrimmingCharactersInSet:
+                                           [NSCharacterSet whitespaceAndNewlineCharacterSet]]);
             if (body.length >= 3) {
-                [filtered addObject:t];
+                [filtered addObject:[prefix stringByAppendingString:body]];
                 continue;
             }
             if (body.length == 2) {
@@ -1422,7 +1445,7 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
                                 (c0 >= 'A' && c0 <= 'Z') || (c0 >= 0x4E00 && c0 <= 0x9FFF)) ||
                                ((c1 >= '0' && c1 <= '9') || (c1 >= 'a' && c1 <= 'z') ||
                                 (c1 >= 'A' && c1 <= 'Z') || (c1 >= 0x4E00 && c1 <= 0x9FFF));
-                if (hasText) [filtered addObject:t];
+                if (hasText) [filtered addObject:[prefix stringByAppendingString:body]];
             }
             // 长度 <= 1：纯语气词/标点，丢弃
         }
