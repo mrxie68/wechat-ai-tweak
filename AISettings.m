@@ -298,6 +298,24 @@ static NSString *g_currentAccount = nil;
     NSString *path = [[NSHomeDirectory() stringByAppendingPathComponent:@"Documents"]
                       stringByAppendingPathComponent:name];
     BOOL ok = [json writeToFile:path atomically:YES];
+    if (ok) {
+        // 只保留最近 3 个备份，避免越用越大
+        NSString *dir = [NSHomeDirectory() stringByAppendingPathComponent:@"Documents"];
+        NSArray *files = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:dir error:nil];
+        NSMutableArray *backups = [NSMutableArray array];
+        for (NSString *f in files) {
+            if ([f hasPrefix:@"WeChatAI_Backup_"] && [f hasSuffix:@".json"]) {
+                [backups addObject:f];
+            }
+        }
+        [backups sortUsingComparator:^NSComparisonResult(id a, id b) {
+            return [b compare:a]; // 新的在前
+        }];
+        for (NSUInteger i = 3; i < backups.count; i++) {
+            NSString *old = [dir stringByAppendingPathComponent:backups[i]];
+            [[NSFileManager defaultManager] removeItemAtPath:old error:nil];
+        }
+    }
     return ok ? path : nil;
 }
 
