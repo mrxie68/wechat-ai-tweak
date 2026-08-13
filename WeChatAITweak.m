@@ -826,6 +826,7 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
          styleProfile:(NSString *)styleProfile
          userProfile:(NSString *)userProfile
          friendInfo:(NSDictionary *)friendInfo
+         fewShotEnabled:(BOOL)fewShotEnabled
           completion:(void (^)(NSString *reply, NSError *error))completion {
     __block void (^attemptBlock)(NSInteger) = nil;
     __weak void (^weakAttemptBlock)(NSInteger) = nil;
@@ -835,7 +836,7 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
                               styleProfile:styleProfile
                               userProfile:userProfile
                               friendInfo:friendInfo
-                              fewShotEnabled:YES
+                              fewShotEnabled:fewShotEnabled
                                 completion:^(NSString *reply, NSError *error) {
             if (error && [self shouldRetryError:error] && attempt < 3) {
                 double wait = attempt == 1 ? 2.0 : 4.0;
@@ -1054,6 +1055,7 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
                styleProfile:[AISettings styleProfileForChat:chatId]
                userProfile:[AISettings userProfile]
                friendInfo:nil
+               fewShotEnabled:YES
                  completion:^(NSString *reply, NSError *error) {
             @synchronized (self) {
                 [g_inFlightChats removeObject:chatId];
@@ -1135,6 +1137,7 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
                styleProfile:[AISettings styleProfileForChat:chatId]
                userProfile:[AISettings userProfile]
                friendInfo:[AISettings friendInfoForChat:chatId]
+               fewShotEnabled:YES
                  completion:^(NSString *reply, NSError *error) {
             @synchronized (self) {
                 [g_inFlightChats removeObject:chatId];
@@ -1573,18 +1576,29 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
         NSArray *messages = @[@{@"role": @"user", @"content": joined}];
 
         NSTimeInterval startTs = CFAbsoluteTimeGetCurrent();
-        [[AIAPIClient shared] sendMessages:messages
-                                  systemPrompt:learnPrompt
-                                  styleProfile:nil
-                                  userProfile:nil
-                                  friendInfo:nil
-                                  fewShotEnabled:NO
-                                    completion:^(NSString *reply, NSError *error) {
+        [self sendWithRetry:messages
+               systemPrompt:learnPrompt
+               styleProfile:nil
+               userProfile:nil
+               friendInfo:nil
+               fewShotEnabled:NO
+                 completion:^(NSString *reply, NSError *error) {
             if (error) {
                 NSLog(kAITweakLogPrefix "学习风格失败(%.1f秒): %@",
                       CFAbsoluteTimeGetCurrent() - startTs, error);
+                NSString *desc = error.localizedDescription ?: @"未知错误";
+                NSString *hint = @"";
+                if ([desc containsString:@"401"]) {
+                    hint = @"\n大概率是 API Key 无效，去 DeepSeek 后台检查。";
+                } else if ([desc containsString:@"402"] || [desc containsString:@"余额"] ||
+                           [desc containsString:@"insufficient"]) {
+                    hint = @"\n大概率是余额不足。";
+                } else if ([desc containsString:@"timeout"] || [desc containsString:@"Timed out"]) {
+                    hint = @"\n网络超时，检查网络后重试。";
+                }
                 finishLearning(@"学习失败",
-                               @"调用 DeepSeek 失败（网络异常、API Key 错误或余额不足），请稍后重试。");
+                               [NSString stringWithFormat:@"调用 DeepSeek 失败：%@%@",
+                                desc, hint]);
                 return;
             }
             NSLog(kAITweakLogPrefix "学习风格完成，API 耗时 %.1f 秒", CFAbsoluteTimeGetCurrent() - startTs);
