@@ -1586,6 +1586,28 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
         }
         NSArray *messages = @[@{@"role": @"user", @"content": joined}];
 
+        // 请求发出后的实时计时：每秒刷新弹窗，让用户看到“确实在等 AI”，而不是卡死
+        __block NSInteger elapsedSec = 0;
+        __block BOOL elapsedCanceled = NO;
+        __block void (^elapsedLoop)(void) = nil;
+        __weak void (^weakElapsedLoop)(void) = nil;
+        elapsedLoop = ^{
+            dispatch_async(dispatch_get_main_queue(), ^{
+                if (elapsedCanceled) return;
+                elapsedSec++;
+                if (progressAlert) {
+                    progressAlert.message = [NSString stringWithFormat:
+                                             @"请求已发出，正在等待 AI 回复…（已等待 %ld 秒）\n\n",
+                                             (long)elapsedSec];
+                }
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1 * NSEC_PER_SEC)),
+                               dispatch_get_main_queue(), weakElapsedLoop);
+            });
+        };
+        weakElapsedLoop = elapsedLoop;
+        NSLog(kAITweakLogPrefix "学习请求已发出，等待 AI 总结…");
+        elapsedLoop();
+
         NSTimeInterval startTs = CFAbsoluteTimeGetCurrent();
         [self sendWithRetry:messages
                systemPrompt:learnPrompt
@@ -1594,6 +1616,7 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
                friendInfo:nil
                fewShotEnabled:NO
                  completion:^(NSString *reply, NSError *error) {
+            elapsedCanceled = YES; // 停止计时，避免恢复后继续刷弹窗
             if (error) {
                 NSLog(kAITweakLogPrefix "学习风格失败(%.1f秒): %@",
                       CFAbsoluteTimeGetCurrent() - startTs, error);
@@ -1617,6 +1640,7 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
                                 raw.length > 0 ? @"\n\n完整响应已复制到剪贴板，直接粘贴发作者。" : @""]);
                 return;
             }
+            NSLog(kAITweakLogPrefix "学习响应已收到，正在保存档案…");
             NSLog(kAITweakLogPrefix "学习风格完成，API 耗时 %.1f 秒", CFAbsoluteTimeGetCurrent() - startTs);
             NSString *profile = [reply stringByTrimmingCharactersInSet:
                                  [NSCharacterSet whitespaceAndNewlineCharacterSet]];
