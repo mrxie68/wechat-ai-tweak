@@ -347,10 +347,27 @@ static NSArray<NSString *> *aiQueryMessages(sqlite3 *db, NSString *table, NSStri
             NSString *content = [NSString stringWithUTF8String:(const char *)txt];
             if (content.length == 0 || [content hasPrefix:@"<msg"]) continue;
             if (dirCol.length) {
-                // 布尔方向列：非 0 = 自己发的，0 = 对方发的
                 int dirValue = sqlite3_column_int(stmt, 1);
-                [rows addObject:[NSString stringWithFormat:@"%@：%@",
-                                 dirValue != 0 ? @"我" : @"对方", content]];
+                BOOL statusLike = [dirCol isEqualToString:@"Status"] ||
+                                  [dirCol isEqualToString:@"status"] ||
+                                  [dirCol isEqualToString:@"SendStatus"] ||
+                                  [dirCol isEqualToString:@"sendStatus"] ||
+                                  [dirCol isEqualToString:@"MsgStatus"] ||
+                                  [dirCol isEqualToString:@"msgStatus"];
+                if (statusLike) {
+                    // 微信 Status 语义：1=收到（对方），4/5=发出（我）；其他值不明，不标
+                    if (dirValue == 4 || dirValue == 5) {
+                        [rows addObject:[@"我：" stringByAppendingString:content]];
+                    } else if (dirValue == 1) {
+                        [rows addObject:[@"对方：" stringByAppendingString:content]];
+                    } else {
+                        [rows addObject:content];
+                    }
+                } else {
+                    // 布尔方向列：非 0 = 自己发的，0 = 对方发的
+                    [rows addObject:[NSString stringWithFormat:@"%@：%@",
+                                     dirValue != 0 ? @"我" : @"对方", content]];
+                }
             } else {
                 [rows addObject:content];
             }
@@ -469,7 +486,9 @@ static NSArray<NSString *> *fetchRecentTextsFromDB(NSString *chatId, NSInteger l
             // 发送方方向列（布尔语义：非0=自己发的），用于学习时区分“我/对方”
             NSString *dirCol = aiPickColumn(cols, @[@"IsSend", @"isSend", @"IsSender", @"isSender",
                                                     @"IsFromMe", @"isFromMe", @"FromMe", @"fromMe",
-                                                    @"IsMine", @"isMine", @"MyMsg", @"myMsg"]);
+                                                    @"IsMine", @"isMine", @"MyMsg", @"myMsg",
+                                                    @"Status", @"status", @"SendStatus", @"sendStatus",
+                                                    @"MsgStatus", @"msgStatus"]);
             if (!timeCol) continue;
             // 统一消息表必须能按会话过滤；Chat_ 专属表本身就是一个会话
             if (!chatSpecific && !userCol) continue;
@@ -1538,7 +1557,19 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
         }
         NSString *joined = [shortTexts componentsJoinedByString:@"\n"];
         if (joined.length > 2500) joined = [joined substringToIndex:2500];
+        // 检测语料有没有“我：/对方：”标注；没有就明确告诉 AI 别把对方话术算成用户的
+        BOOL hasLabels = NO;
+        for (NSString *t in texts) {
+            if ([t hasPrefix:@"我："] || [t hasPrefix:@"对方："]) {
+                hasLabels = YES;
+                break;
+            }
+        }
         NSString *learnPrompt = @"你是一名聊天风格分析师。以下是某微信用户与其好友最近的聊天记录：带“我：”前缀的是用户本人发的，带“对方：”前缀的是对方发的（若没有前缀，说明数据库未提供发送方信息，请结合语境综合判断）。请总结这位“用户本人”的说话风格：语气、常用词/口头禅、句子长短、是否爱用表情和标点、回复习惯、惯用开场或结束语。用 150~250 字的中文直接输出总结，不要客套，不要写“分析如下”之类的开头。";
+        if (!hasLabels) {
+            learnPrompt = [learnPrompt stringByAppendingString:
+                           @"\n重要提醒：这批记录没有标注发送方，无法区分你与对方。总结时不要把明显是对方的称呼、口头禅算成你的风格；分不清的部分宁可不写。"];
+        }
         NSArray *messages = @[@{@"role": @"user", @"content": joined}];
 
         NSTimeInterval startTs = CFAbsoluteTimeGetCurrent();
@@ -1561,10 +1592,15 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
                                  [NSCharacterSet whitespaceAndNewlineCharacterSet]];
             [AISettings setStyleProfile:profile forChat:chatId];
             NSLog(kAITweakLogPrefix "风格学习完成（%lu 条记录）: %@", (unsigned long)texts.count, chatId);
+            NSString *suffix = hasLabels
+                ? @""
+                : @"\n\n⚠️ 记录未标注发送方，总结可能混合双方话术，建议在“查看/编辑档案”里手动修正。";
             finishLearning(@"学习完成",
                            [NSString stringWithFormat:
                             @"已保存这个好友的风格档案，之后与 ta 的对话会用你的语气回复。\n\n档案摘要：\n%@",
-                            profile.length > 200 ? [profile substringToIndex:200] : profile]);
+                            [NSString stringWithFormat:@"%@%@",
+                             profile.length > 200 ? [profile substringToIndex:200] : profile,
+                             suffix]]);
         }];
     });
 }
