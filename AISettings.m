@@ -267,7 +267,7 @@ static NSString * const kAISettingsChatOverridesKey = @"WeChatAIChatOverrides";
     if (usrName.length == 0) return NO;
     NSString *stored = [[NSUserDefaults standardUserDefaults]
                         stringForKey:[kAISettingsActivationPrefix stringByAppendingString:usrName]];
-    return stored.length > 0;
+    return stored.length > 0 && [stored isEqualToString:kAIActivationKey];
 }
 
 +(void)setActivationKey:(NSString *)key forAccount:(NSString *)usrName {

@@ -830,8 +830,8 @@ static UITextField *makeRowField(NSString *placeholder) {
     BOOL activated = [WeChatAIHandler isActivatedForCurrentAccount];
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"激活密钥"
                                                                   message:activated
-        ? [NSString stringWithFormat:@"当前微信账号（%@）已激活。可以修改密钥，或停用本账号。", usr]
-        : [NSString stringWithFormat:@"当前微信账号（%@）未激活。\n输入一个密钥即可激活本账号（仅本机使用，不做远程验证）。", usr]
+        ? [NSString stringWithFormat:@"当前微信账号（%@）已激活。", usr]
+        : [NSString stringWithFormat:@"当前微信账号（%@）未激活。\n请输入激活密钥（仅本机门禁，不做远程验证）。", usr]
                                                            preferredStyle:UIAlertControllerStyleAlert];
     [alert addTextFieldWithConfigurationHandler:^(UITextField *tf) {
         tf.placeholder = @"输入密钥";
@@ -840,22 +840,33 @@ static UITextField *makeRowField(NSString *placeholder) {
         tf.autocorrectionType = UITextAutocorrectionTypeNo;
     }];
     [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
-    [alert addAction:[UIAlertAction actionWithTitle:activated ? @"修改密钥" : @"激活"
-                                             style:UIAlertActionStyleDefault
-                                           handler:^(UIAlertAction *action) {
-        NSString *key = [alert.textFields.firstObject.text
-                         stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-        if (key.length == 0) {
-            UIAlertController *warn = [UIAlertController alertControllerWithTitle:@"密钥不能为空"
-                                                                         message:@"请输入一个至少 1 位的密钥。"
-                                                                  preferredStyle:UIAlertControllerStyleAlert];
-            [warn addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
-            [self presentViewController:warn animated:YES completion:nil];
-            return;
-        }
-        [AISettings setActivationKey:key forAccount:usr];
-        [self refreshActivationLabel];
-    }]];
+    if (!activated) {
+        [alert addAction:[UIAlertAction actionWithTitle:@"激活"
+                                                 style:UIAlertActionStyleDefault
+                                               handler:^(UIAlertAction *action) {
+            NSString *key = [alert.textFields.firstObject.text
+                             stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+            NSString *warnTitle = nil;
+            NSString *warnMsg = nil;
+            if (key.length == 0) {
+                warnTitle = @"密钥不能为空";
+                warnMsg = @"请输入激活密钥。";
+            } else if (![key isEqualToString:kAIActivationKey]) {
+                warnTitle = @"密钥错误";
+                warnMsg = @"输入的密钥不正确，请重试。";
+            }
+            if (warnTitle) {
+                UIAlertController *warn = [UIAlertController alertControllerWithTitle:warnTitle
+                                                                             message:warnMsg
+                                                                      preferredStyle:UIAlertControllerStyleAlert];
+                [warn addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
+                [self presentViewController:warn animated:YES completion:nil];
+                return;
+            }
+            [AISettings setActivationKey:key forAccount:usr];
+            [self refreshActivationLabel];
+        }]];
+    }
     if (activated) {
         [alert addAction:[UIAlertAction actionWithTitle:@"停用本账号"
                                                  style:UIAlertActionStyleDestructive
