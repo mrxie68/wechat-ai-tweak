@@ -344,6 +344,68 @@ static NSArray<NSString *> *aiQueryMessages(sqlite3 *db, NSString *table, NSStri
     return rows;
 }
 
+// 判断一段内容是不是二进制/0-1序列（读错列时常见）
+static BOOL aiLooksLikeBinary(NSString *s) {
+    if (s.length < 8) return NO;
+    NSInteger binChars = 0;
+    for (int i = 0; i < (int)s.length; i++) {
+        unichar ch = [s characterAtIndex:i];
+        if (ch == '0' || ch == '1' || ch == ' ' || ch == '\n' ||
+            ch == '\r' || ch == '\t') {
+            binChars++;
+        } else if (ch < 0x20) {
+            return YES; // 控制字符 = 二进制
+        }
+    }
+    return binChars == s.length; // 全是 0/1 和空白
+}
+
+// 十六进制串（读错列时的另一种二进制形态）
+static BOOL aiLooksLikeHex(NSString *s) {
+    if (s.length < 8) return NO;
+    for (int i = 0; i < (int)s.length; i++) {
+        unichar ch = [s characterAtIndex:i];
+        BOOL ok = (ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f') ||
+                  (ch >= 'A' && ch <= 'F') || ch == ' ' || ch == '\n' ||
+                  ch == '\r' || ch == '\t' || ch == 'x' || ch == 'X';
+        if (!ok) return NO;
+    }
+    return YES;
+}
+
+// 内容列“可读性”打分：有中文、可读字符占比高的列得分高；二进制/0-1 串得 0 分
+static NSInteger aiTextReadabilityScore(NSArray<NSString *> *rows) {
+    NSInteger score = 0;
+    for (NSString *s in rows) {
+        if (s.length == 0 || aiLooksLikeBinary(s) || aiLooksLikeHex(s)) continue;
+        BOOL hasCJK = NO;
+        NSInteger texty = 0, total = 0;
+        NSUInteger max = MIN(s.length, 60);
+        for (NSUInteger i = 0; i < max; i++) {
+            unichar ch = [s characterAtIndex:i];
+            if (ch >= 0x4E00 && ch <= 0x9FFF) {
+                hasCJK = YES;
+                texty++;
+            } else if ((ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'z') ||
+                       (ch >= 'A' && ch <= 'Z') || ch == ' ' || ch == ',' || ch == '.' ||
+                       ch == '?' || ch == '!' || ch == '，' || ch == '。' || ch == '？' ||
+                       ch == '！' || ch == '、' || ch == ':' || ch == '：' || ch == '-' ||
+                       ch == '/' || ch == '&' || ch == '@' || ch == '+' || ch == '#' ||
+                       ch == '=') {
+                texty++;
+            }
+            total++;
+        }
+        if (total == 0) continue;
+        // 可读字符占比过半，且要么有中文、要么长度够长
+        if (texty * 2 >= total) {
+            if (hasCJK) score += 6;      // 中文字符权重高：哪怕行数少也优先
+            else if (s.length >= 6) score += 1; // 英文长句算文本但权重低
+        }
+    }
+    return score;
+}
+
 static NSArray<NSString *> *fetchRecentTextsFromDB(NSString *chatId, NSInteger limit, NSString **dbDiag) {
     NSMutableArray *texts = [NSMutableArray array];
     if (chatId.length == 0 || limit <= 0) return texts;
@@ -353,6 +415,7 @@ static NSArray<NSString *> *fetchRecentTextsFromDB(NSString *chatId, NSInteger l
     NSInteger fileCount = 0, tableCount = 0, queryCount = 0;
     NSString *usedDirCol = @"";
     NSString *usedTextCol = @"";
+    NSString *usedTable = @"";
     NSArray *dbs = aiFindDatabaseFiles();
     for (NSDictionary *d in dbs) {
         NSString *full = d[@"path"];
@@ -387,21 +450,31 @@ static NSArray<NSString *> *fetchRecentTextsFromDB(NSString *chatId, NSInteger l
             // 统一消息表必须能按会话过滤；Chat_ 专属表本身就是一个会话
             if (!chatSpecific && !userCol) continue;
             queryCount++;
-            // 内容列可能有多个（Des/Message/Content…），按优先级试到有结果为止
+            // 内容列可能有多个（Des/Message/Content…），逐列查询并打分，
+            // 选“最像真人文本”的一列，避免读到 0/1 二进制等错误列
             NSArray *textCandidates = @[@"Des", @"Message", @"Content", @"Text",
                                         @"msgContent", @"MsgContent",
                                         @"messageContent", @"MessageContent"];
+            NSString *bestCol = nil;
+            NSArray *bestRows = nil;
+            NSInteger bestScore = -1;
             for (NSString *tc in textCandidates) {
                 NSString *textCol = aiPickColumn(cols, @[tc]);
                 if (!textCol) continue;
                 NSArray *rows = aiQueryMessages(db, tbl, textCol, timeCol, userCol,
                                                 dirCol, chatSpecific, chatId, limit);
-                [texts addObjectsFromArray:rows];
-                if (texts.count > 0) {
-                    usedDirCol = dirCol.length ? dirCol : @"无";
-                    usedTextCol = textCol ?: @"";
-                    break;
+                NSInteger score = aiTextReadabilityScore(rows);
+                if (score > bestScore) {
+                    bestScore = score;
+                    bestCol = textCol;
+                    bestRows = rows;
                 }
+            }
+            if (bestRows.count > 0 && bestScore >= 6) {
+                [texts addObjectsFromArray:bestRows];
+                usedDirCol = dirCol.length ? dirCol : @"无";
+                usedTextCol = bestCol ?: @"";
+                usedTable = tbl;
             }
             if (texts.count >= (NSUInteger)limit) break;
         }
@@ -412,10 +485,11 @@ static NSArray<NSString *> *fetchRecentTextsFromDB(NSString *chatId, NSInteger l
         [texts removeObjectsInRange:NSMakeRange(0, texts.count - (NSUInteger)limit)];
     }
     if (dbDiag) {
-        *dbDiag = [NSString stringWithFormat:@"[文件%ld/消息表%ld/可查%ld/方向%@/列%@/行%lu]",
+        *dbDiag = [NSString stringWithFormat:@"[文件%ld/消息表%ld/可查%ld/方向%@/列%@/表%@/行%lu]",
                    (long)fileCount, (long)tableCount, (long)queryCount,
                    usedDirCol.length ? usedDirCol : (tableCount > 0 ? @"无" : @"未测"),
                    usedTextCol.length ? usedTextCol : @"未测",
+                   usedTable.length ? usedTable : @"未测",
                    (unsigned long)texts.count];
     }
     // 查询是倒序（新的在前），反转成时间正序给 AI
@@ -1353,11 +1427,6 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
             // 长度 <= 1：纯语气词/标点，丢弃
         }
         NSArray *texts = filtered;
-        // 兜底：过滤太狠导致不足 5 条时，退回用原始语料（保证学习可用）
-        if (texts.count < 5 && rawTexts.count >= 5) {
-            NSLog(kAITweakLogPrefix "过滤后语料不足，回退用原始 %lu 条", (unsigned long)rawTexts.count);
-            texts = rawTexts;
-        }
         if (texts.count < 5) {
             // 原始读取样本预览（最多 3 条，各截断 20 字），帮助定位读到的到底是什么
             NSMutableArray *previews = [NSMutableArray array];
