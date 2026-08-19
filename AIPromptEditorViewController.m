@@ -4,6 +4,7 @@
 #import "AIConfig.h"
 #import "AIContext.h"
 #import "AIProfileListViewController.h"
+#import "AIAPIClient.h"
 
 @interface WeChatAIHandler : NSObject
 + (NSString *)statusString;
@@ -86,6 +87,8 @@ static NSString *AIStateSummary(NSString *current, NSString *defaultText) {
 @property (nonatomic, strong) UIView *cardView;
 @property (nonatomic, strong) UITextView *textView;
 @property (nonatomic, strong) UILabel *placeholderLabel;
+@property (nonatomic, assign) CGFloat keyboardShift;
+@property (nonatomic, assign) CGFloat keyboardTop;
 @end
 
 @implementation AIModalTextEditorController
@@ -108,6 +111,7 @@ static NSString *AIStateSummary(NSString *current, NSString *defaultText) {
         self.resetText = resetText;
         self.resetTitle = resetTitle ?: @"恢复默认";
         self.saveHandler = saveHandler;
+        self.keyboardTop = -1.0;
     }
     return self;
 }
@@ -210,6 +214,19 @@ static NSString *AIStateSummary(NSString *current, NSString *defaultText) {
     [self refreshPlaceholder];
 }
 
+- (void)viewWillAppear:(BOOL)animated {
+    [super viewWillAppear:animated];
+    NSNotificationCenter *center = [NSNotificationCenter defaultCenter];
+    [center addObserver:self selector:@selector(keyboardFrameWillChange:) name:UIKeyboardWillChangeFrameNotification object:nil];
+    [center addObserver:self selector:@selector(keyboardWillHide:) name:UIKeyboardWillHideNotification object:nil];
+}
+
+- (void)viewWillDisappear:(BOOL)animated {
+    [super viewWillDisappear:animated];
+    [[NSNotificationCenter defaultCenter] removeObserver:self name:UIKeyboardWillChangeFrameNotification object:nil];
+    [[NSNotificationCenter defaultCenter] removeObserver:self name:UIKeyboardWillHideNotification object:nil];
+}
+
 - (void)viewDidLayoutSubviews {
     [super viewDidLayoutSubviews];
     [self layoutCard];
@@ -218,9 +235,16 @@ static NSString *AIStateSummary(NSString *current, NSString *defaultText) {
 - (void)layoutCard {
     CGFloat width = self.view.bounds.size.width;
     CGFloat cardWidth = MIN(width - 32, 520);
-    CGFloat cardHeight = 430;
+    BOOL keyboardVisible = self.keyboardTop > 0.0 && self.keyboardTop < self.view.bounds.size.height;
+    CGFloat cardHeight = keyboardVisible ? MAX(280.0, MIN(430.0, self.keyboardTop - 32.0)) : 430.0;
+    CGFloat cardY = keyboardVisible ? MAX(16.0, (self.keyboardTop - cardHeight) / 2.0)
+                                    : (self.view.bounds.size.height - cardHeight) / 2.0;
+    // Always lay out from the unshifted frame. Keyboard notifications can fire
+    // repeatedly while the keyboard animates; using a transform avoids
+    // accumulating offsets or fighting Auto Layout/frame changes.
+    self.cardView.transform = CGAffineTransformIdentity;
     self.cardView.frame = CGRectMake((width - cardWidth) / 2.0,
-                                     (self.view.bounds.size.height - cardHeight) / 2.0,
+                                     cardY,
                                      cardWidth,
                                      cardHeight);
     UIView *handle = [self.cardView viewWithTag:1];
@@ -244,6 +268,34 @@ static NSString *AIStateSummary(NSString *current, NSString *defaultText) {
     editorBg.frame = CGRectMake(12, editorTop, cardWidth - 24, cardHeight - editorTop - 18);
     self.textView.frame = CGRectMake(12, 10, editorBg.bounds.size.width - 24, editorBg.bounds.size.height - 20);
     self.placeholderLabel.frame = CGRectMake(17, 18, editorBg.bounds.size.width - 34, 44);
+    self.cardView.transform = CGAffineTransformMakeTranslation(0, self.keyboardShift);
+}
+
+- (void)keyboardFrameWillChange:(NSNotification *)note {
+    CGRect endFrame = [note.userInfo[UIKeyboardFrameEndUserInfoKey] CGRectValue];
+    CGRect keyboardFrame = [self.view convertRect:endFrame fromView:nil];
+    self.keyboardTop = CGRectGetMinY(keyboardFrame);
+    self.keyboardShift = 0.0;
+
+    NSTimeInterval duration = [note.userInfo[UIKeyboardAnimationDurationUserInfoKey] doubleValue];
+    UIViewAnimationOptions curve = ([note.userInfo[UIKeyboardAnimationCurveUserInfoKey] integerValue] << 16) | UIViewAnimationOptionBeginFromCurrentState;
+    [UIView animateWithDuration:duration > 0 ? duration : 0.25
+                          delay:0
+                        options:curve
+                     animations:^{ [self layoutCard]; }
+                     completion:nil];
+}
+
+- (void)keyboardWillHide:(NSNotification *)note {
+    self.keyboardTop = -1.0;
+    self.keyboardShift = 0.0;
+    NSTimeInterval duration = [note.userInfo[UIKeyboardAnimationDurationUserInfoKey] doubleValue];
+    UIViewAnimationOptions curve = ([note.userInfo[UIKeyboardAnimationCurveUserInfoKey] integerValue] << 16) | UIViewAnimationOptionBeginFromCurrentState;
+    [UIView animateWithDuration:duration > 0 ? duration : 0.25
+                          delay:0
+                        options:curve
+                     animations:^{ [self layoutCard]; }
+                     completion:nil];
 }
 
 - (void)refreshPlaceholder {
@@ -274,6 +326,7 @@ static NSString *AIStateSummary(NSString *current, NSString *defaultText) {
 @property (nonatomic, assign) AISettingsPageKind pageKind;
 @property (nonatomic, strong) UITableView *tableView;
 @property (nonatomic, assign) BOOL activationPrompted;
+- (void)runTestConversation;
 @end
 
 @implementation AIPromptEditorViewController
@@ -638,9 +691,101 @@ static NSString *AIStateSummary(NSString *current, NSString *defaultText) {
 }
 
 - (void)statusTapped {
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"AI 状态" message:[WeChatAIHandler statusString] preferredStyle:UIAlertControllerStyleAlert];
+    NSString *statusText = [WeChatAIHandler statusString];
+    // 状态文本可能较长，保留复制能力，方便用户把完整诊断发回来。
+    [[UIPasteboard generalPasteboard] setString:statusText ?: @""];
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"AI 状态"
+                                                                       message:[NSString stringWithFormat:@"%@\n\n（完整状态已复制到剪贴板）", statusText ?: @""]
+                                                                preferredStyle:UIAlertControllerStyleAlert];
     [alert addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"测试机器人聊天"
+                                               style:UIAlertActionStyleDefault
+                                             handler:^(UIAlertAction *action) {
+        [self runTestConversation];
+    }]];
     [self presentViewController:alert animated:YES completion:nil];
+}
+
+- (void)runTestConversation {
+    if (![WeChatAIHandler isActivatedForCurrentAccount]) {
+        UIAlertController *warn = [UIAlertController alertControllerWithTitle:@"尚未激活"
+                                                                         message:@"请先激活当前微信账号，再测试机器人聊天。"
+                                                                  preferredStyle:UIAlertControllerStyleAlert];
+        [warn addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
+        [self presentViewController:warn animated:YES completion:nil];
+        return;
+    }
+
+    NSString *key = [AISettings apiKey];
+    if (key.length == 0) {
+        UIAlertController *warn = [UIAlertController alertControllerWithTitle:@"未配置 API Key"
+                                                                         message:[NSString stringWithFormat:@"请先在设置页填写 %@ 的 API Key。", AIProviderTitle([AISettings baseURL])]
+                                                                  preferredStyle:UIAlertControllerStyleAlert];
+        [warn addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
+        [self presentViewController:warn animated:YES completion:nil];
+        return;
+    }
+
+    NSString *provider = AIProviderTitle([AISettings baseURL]);
+    UIAlertController *progress = [UIAlertController alertControllerWithTitle:@"正在测试机器人聊天"
+                                                                         message:[NSString stringWithFormat:@"正在连接 %@，验证 Key、模型和网络…", provider]
+                                                                  preferredStyle:UIAlertControllerStyleAlert];
+    UIActivityIndicatorView *spinner = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleMedium];
+    spinner.translatesAutoresizingMaskIntoConstraints = NO;
+    [spinner startAnimating];
+    [progress.view addSubview:spinner];
+    [progress.view addConstraint:[NSLayoutConstraint constraintWithItem:spinner
+                                                               attribute:NSLayoutAttributeCenterX
+                                                               relatedBy:NSLayoutRelationEqual
+                                                                  toItem:progress.view
+                                                               attribute:NSLayoutAttributeCenterX
+                                                              multiplier:1.0
+                                                                constant:0.0]];
+    [progress.view addConstraint:[NSLayoutConstraint constraintWithItem:spinner
+                                                               attribute:NSLayoutAttributeBottom
+                                                               relatedBy:NSLayoutRelationEqual
+                                                                  toItem:progress.view
+                                                               attribute:NSLayoutAttributeBottom
+                                                              multiplier:1.0
+                                                                constant:-16.0]];
+    [self presentViewController:progress animated:YES completion:nil];
+
+    NSArray *history = @[@{ @"role": @"user", @"content": @"在吗？测试一下，简单回一句就行。" }];
+    [[AIAPIClient shared] sendMessages:history
+                          systemPrompt:[AISettings autoSystemPrompt]
+                           styleProfile:nil
+                            userProfile:[AISettings userProfile]
+                             friendInfo:nil
+                        timeoutInterval:60.0
+                         fewShotEnabled:YES
+                             completion:^(NSString *reply, NSError *error) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [progress dismissViewControllerAnimated:NO completion:^{
+                if (error) {
+                    NSString *desc = error.localizedDescription ?: @"未知错误";
+                    NSString *hint = @"";
+                    if ([desc containsString:@"401"]) hint = @"\n\n请检查 API Key 是否正确、是否属于当前服务商。";
+                    else if ([desc containsString:@"402"] || [desc containsString:@"余额"] || [desc containsString:@"insufficient"]) hint = @"\n\n服务商余额或额度不足。";
+                    else if ([desc containsString:@"timeout"] || [desc containsString:@"Timed out"]) hint = @"\n\n网络请求超时，请检查网络后重试。";
+                    UIAlertController *fail = [UIAlertController alertControllerWithTitle:@"❌ 测试失败"
+                                                                                     message:[NSString stringWithFormat:@"原因：%@%@", desc, hint]
+                                                                              preferredStyle:UIAlertControllerStyleAlert];
+                    [fail addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
+                    [self presentViewController:fail animated:YES completion:nil];
+                    return;
+                }
+
+                NSUInteger fsCount = [AIAPIClient fewShotMessageCount];
+                NSString *fsDesc = fsCount > 0 ? [NSString stringWithFormat:@"%lu 条（%lu 组）", (unsigned long)fsCount, (unsigned long)fsCount / 2] : @"0 条（旧格式纯文本兜底）";
+                NSString *okMsg = [NSString stringWithFormat:@"AI 回复：%@\n\n服务商：%@\n接口：%@\n模型：%@\n温度 %.2f / 频率惩罚 %.2f / 存在惩罚 %.2f\nFew-Shot：%@\nAPI Key：%@",
+                                   reply.length > 0 ? reply : @"（空回复）", provider, AIShortBaseURL([AISettings baseURL]), [AISettings model],
+                                   [AISettings temperature], [AISettings frequencyPenalty], [AISettings presencePenalty], fsDesc, AIMaskKey([AISettings apiKey])];
+                UIAlertController *ok = [UIAlertController alertControllerWithTitle:@"✅ 测试成功" message:okMsg preferredStyle:UIAlertControllerStyleAlert];
+                [ok addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
+                [self presentViewController:ok animated:YES completion:nil];
+            }];
+        });
+    }];
 }
 
 - (void)activationTapped {
