@@ -66,7 +66,9 @@ static NSArray<NSDictionary *> *aiParseFewShotSamples(NSString *samples, NSUInte
 
     // 系统提示词 + 会话历史
     NSMutableArray *payload = [NSMutableArray array];
-    NSString *finalPrompt = systemPrompt;
+    // 固定的行为优先级：当前聊天决定回什么，真人样本决定怎么说，档案只做兜底。
+    NSString *priorityPrompt = @"【回复优先级】先看最近几条聊天，直接接住对方当前话题；不要为了展示风格主动引入旧话题。表达方式优先模仿本人真实发言样本，事实只来自当前对话和明确档案，绝不能从风格样本猜事实。不确定就简短反问或承认不知道。只输出准备发送给对方的聊天文本，不要解释你的分析过程。\n\n";
+    NSString *finalPrompt = [priorityPrompt stringByAppendingString:(systemPrompt ?: @"")];
     NSArray *fewShot = @[];
     NSString *samples = fewShotEnabled ? [AISettings styleSamples] : @"";
     if (samples.length > 0) {
@@ -74,12 +76,12 @@ static NSArray<NSDictionary *> *aiParseFewShotSamples(NSString *samples, NSUInte
         // 解析不出 Q:/A: 时退回纯文本注入，兼容以前粘贴的自由格式样本
         if (fewShot.count == 0) {
             finalPrompt = [finalPrompt stringByAppendingFormat:
-                @"\n\n【你的真实聊天风格样本，请模仿这里的语气、用词和习惯来回复】\n%@", samples];
+                @"\n\n【本人手动提供的语气样本：只模仿表达方式，不把里面的地点、经历、喜好当成事实】\n%@", samples];
         }
     }
     if (styleProfile.length > 0) {
         finalPrompt = [finalPrompt stringByAppendingFormat:
-            @"\n\n【你与这位好友聊天时的风格档案，请严格按这个风格说话】\n%@", styleProfile];
+            @"\n\n【本人真实发言样本与已学习语气档案：优先模仿句长、口头禅、标点和分寸；只模仿说法，不复制样本中的事实】\n%@", styleProfile];
     }
     if (userProfile.length > 0) {
         finalPrompt = [finalPrompt stringByAppendingFormat:
@@ -185,4 +187,5 @@ static NSArray<NSDictionary *> *aiParseFewShotSamples(NSString *samples, NSUInte
 }
 
 @end
+
 

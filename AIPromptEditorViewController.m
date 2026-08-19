@@ -387,17 +387,17 @@ static NSString *AIStateSummary(NSString *current, NSString *defaultText) {
     if (self.pageKind == AISettingsPageKindHome) {
         if (section == 0) return @"状态与会话";
         if (section == 1) return @"模型与接口";
-        if (section == 2) return @"回复行为";
+        if (section == 2) return @"像本人聊天";
         return @"更多设置";
     }
-    if (self.pageKind == AISettingsPageKindPrompts) return @"通过弹窗编辑，主页更干净";
+    if (self.pageKind == AISettingsPageKindPrompts) return @"越像本人，越要少填规则";
     if (self.pageKind == AISettingsPageKindAdvanced) return @"生成参数";
     return @"数据工具";
 }
 
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
     if (self.pageKind == AISettingsPageKindHome && section == 1) return @"支持 DeepSeek、智谱AI，以及任何 OpenAI 兼容接口。";
-    if (self.pageKind == AISettingsPageKindPrompts) return @"这些内容会直接影响 AI 的语气、人物设定和风格学习效果。";
+    if (self.pageKind == AISettingsPageKindPrompts) return @"优先级：当前聊天 > 本人最近发言 > 已学习语气 > 基础信息。这里主要补充 AI 自己读不出来的内容。";
     if (self.pageKind == AISettingsPageKindAdvanced) return @"建议先用默认值，只有明确想调整生成风格时再改。";
     if (self.pageKind == AISettingsPageKindData) return @"恢复默认会保留 API Key、激活状态和学习档案；清空记忆则只清聊天上下文与学习结果。";
     return nil;
@@ -498,8 +498,8 @@ static NSString *AIStateSummary(NSString *current, NSString *defaultText) {
             return cell;
         }
         if (indexPath.row == 0) {
-            cell.textLabel.text = @"提示词与风格";
-            cell.detailTextLabel.text = @"提示词 / 样本 / 基础信息";
+            cell.textLabel.text = @"像本人聊天";
+            cell.detailTextLabel.text = @"最近发言 / 语气 / 基础信息";
         } else if (indexPath.row == 1) {
             cell.textLabel.text = @"高级参数";
             cell.detailTextLabel.text = @"温度 / 惩罚项";
@@ -780,4 +780,5 @@ static NSString *AIStateSummary(NSString *current, NSString *defaultText) {
 }
 
 @end
+
 

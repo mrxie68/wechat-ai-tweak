@@ -810,6 +810,32 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
     }
 }
 
++ (NSString *)chatStyleContextForChat:(NSString *)chatId {
+    if (chatId.length == 0) return @"";
+    NSArray<NSString *> *corpus = [AISettings styleCorpusForChat:chatId];
+    NSMutableArray<NSString *> *mine = [NSMutableArray array];
+    for (NSString *line in [corpus reverseObjectEnumerator]) {
+        if (![line hasPrefix:@"我："]) continue;
+        NSString *text = [line substringFromIndex:2];
+        if (text.length == 0) continue;
+        [mine insertObject:text atIndex:0];
+        if (mine.count >= 12) break;
+    }
+    NSMutableString *context = [NSMutableString string];
+    if (mine.count > 0) {
+        [context appendString:@"【本人最近真实发言样本】\n"];
+        for (NSString *text in mine) {
+            [context appendFormat:@"- %@\n", text];
+        }
+    }
+    NSString *profile = [AISettings styleProfileForChat:chatId];
+    if (profile.length > 0) {
+        if (context.length > 0) [context appendString:@"\n"];
+        [context appendString:@"【这位好友对应的已学习语气摘要】\n"];
+        [context appendString:profile];
+    }
+    return context;
+}
 // 捕获用户手动发送（发送路径 hook）：记进上下文。
 // 回显稍后也会到达，靠“最近发送”缓存去重，不会记两遍。
 + (void)recordUserSentMessage:(NSString *)content chatId:(NSString *)chatId timestamp:(unsigned int)timestamp {
@@ -1103,10 +1129,10 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
 
         NSUInteger replyEpoch = epoch;
         [self sendWithRetry:history
-               systemPrompt:kAISystemPrompt
-               styleProfile:[AISettings styleProfileForChat:chatId]
+               systemPrompt:[AISettings autoSystemPrompt]
+               styleProfile:[self chatStyleContextForChat:chatId]
                userProfile:[AISettings userProfile]
-               friendInfo:nil
+               friendInfo:[AISettings friendInfoForChat:chatId]
                timeoutInterval:60
                fewShotEnabled:YES
                  completion:^(NSString *reply, NSError *error) {
@@ -1187,7 +1213,7 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
         NSUInteger replyEpoch = epoch;
         [self sendWithRetry:history
                systemPrompt:[AISettings autoSystemPrompt]
-               styleProfile:[AISettings styleProfileForChat:chatId]
+               styleProfile:[self chatStyleContextForChat:chatId]
                userProfile:[AISettings userProfile]
                friendInfo:[AISettings friendInfoForChat:chatId]
                timeoutInterval:60
@@ -1706,7 +1732,7 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
                systemPrompt:learnPrompt
                styleProfile:nil
                userProfile:nil
-               friendInfo:nil
+               friendInfo:[AISettings friendInfoForChat:chatId]
                timeoutInterval:20 // 学习超时 20 秒，超时自动重试，避免干等一分钟
                fewShotEnabled:NO
                  completion:^(NSString *reply, NSError *error) {
@@ -2419,3 +2445,6 @@ static void WeChatAIInit(void) {
 }
 
 @end
+
+
+
