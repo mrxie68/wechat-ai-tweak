@@ -29,6 +29,8 @@
 +(BOOL)restoreFromFile:(NSString *)path;  // 从备份文件整体恢复（覆盖当前配置）
 + (NSString *)apiKey;                  // 同理
 + (void)setApiKey:(NSString *)key;
++ (NSString *)baseURL;
++ (void)setBaseURL:(NSString *)baseURL;
 + (NSString *)model;
 + (void)setModel:(NSString *)model;
 + (NSString *)replyMode;              // @"auto" / @"trigger"，默认 kAIReplyMode
@@ -57,3 +59,5 @@
 + (BOOL)chatEnabled:(NSString *)chatId;   // 默认关闭，只有聊天信息页单独开过才回
 
 @end
+
+

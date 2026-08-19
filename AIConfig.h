@@ -10,10 +10,10 @@
 // 留空时 AI 不会工作，状态弹窗会提示“未填/过短”。
 #define kAIAPIKey @""
 
-// OpenAI 兼容接口地址（DeepSeek 默认）
+// OpenAI 兼容接口地址（默认 DeepSeek；设置页可一键切到智谱AI或自定义）
 #define kAIBaseURL @"https://api.deepseek.com"
 
-// 模型名（deepseek-v4-flash / deepseek-v4-pro / gpt-4o-mini / glm-4-flash 等）
+// 模型名（deepseek-v4-flash / deepseek-v4-pro / glm-4-flash / glm-4-plus 等）
 // 注意：deepseek-chat 已弃用，请用 v4 系列
 #define kAIModel @"deepseek-v4-flash"
 
@@ -82,6 +82,8 @@
 #define kAITweakLogPrefix @"[WeChatAI] "
 
 // 插件版本（弹窗/状态命令会显示，方便确认手机上装的是不是最新编译）
-#define kAITweakVersion @"0.11.63"
+#define kAITweakVersion @"0.11.64"
 
 #endif
+
+

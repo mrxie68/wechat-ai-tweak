@@ -55,7 +55,9 @@ static NSArray<NSDictionary *> *aiParseFewShotSamples(NSString *samples, NSUInte
          fewShotEnabled:(BOOL)fewShotEnabled
           completion:(void (^)(NSString *, NSError *))completion {
 
-    NSURL *url = [NSURL URLWithString:[kAIBaseURL stringByAppendingString:@"/chat/completions"]];
+    NSString *baseURL = [[AISettings baseURL] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    if ([baseURL hasSuffix:@"/"]) baseURL = [baseURL substringToIndex:baseURL.length - 1];
+    NSURL *url = [NSURL URLWithString:[baseURL stringByAppendingString:@"/chat/completions"]];
     NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:url];
     request.HTTPMethod = @"POST";
     [request setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
@@ -183,3 +185,4 @@ static NSArray<NSDictionary *> *aiParseFewShotSamples(NSString *samples, NSUInte
 }
 
 @end
+

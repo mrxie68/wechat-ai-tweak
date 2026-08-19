@@ -8,6 +8,7 @@ static NSString * const kAISettingsAutoPromptKey = @"WeChatAIAutoSystemPrompt";
 static NSString * const kAISettingsStyleSamplesKey = @"WeChatAIStyleSamples";
 static NSString * const kAISettingsUserProfileKey = @"WeChatAIUserProfile";
 static NSString * const kAISettingsAPIKeyKey = @"WeChatAIAPIKey";
+static NSString * const kAISettingsBaseURLKey = @"WeChatAIBaseURL";
 static NSString * const kAISettingsModelKey = @"WeChatAIModel";
 static NSString * const kAISettingsReplyModeKey = @"WeChatAIReplyMode";
 static NSString * const kAISettingsEnabledKey = @"WeChatAIEnabled";
@@ -83,7 +84,7 @@ static NSString *g_currentAccount = nil;
 
     NSArray *legacyKeys = @[
         kAISettingsAutoPromptKey, kAISettingsStyleSamplesKey, kAISettingsUserProfileKey,
-        kAISettingsModelKey, kAISettingsReplyModeKey, kAISettingsEnabledKey,
+        kAISettingsBaseURLKey, kAISettingsModelKey, kAISettingsReplyModeKey, kAISettingsEnabledKey,
         kAISettingsGroupQuestionOnlyKey, kAISettingsStickerLightReplyKey,
         kAISettingsReplyDelayKey, kAISettingsTemperatureKey,
         kAISettingsFrequencyPenaltyKey, kAISettingsPresencePenaltyKey,
@@ -511,6 +512,28 @@ static NSString *g_currentAccount = nil;
     return kAIModel;
 }
 
++ (NSString *)baseURL {
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    NSString *key = [self namespacedKey:kAISettingsBaseURLKey];
+    NSString *stored = [[defaults stringForKey:key]
+                        stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    if (stored.length > 0) return stored;
+    return kAIBaseURL;
+}
+
++ (void)setBaseURL:(NSString *)baseURL {
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    NSString *key = [self namespacedKey:kAISettingsBaseURLKey];
+    NSString *trimmed = [baseURL stringByTrimmingCharactersInSet:
+                         [NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    if (trimmed.length > 0) {
+        [defaults setObject:trimmed forKey:key];
+    } else {
+        [defaults removeObjectForKey:key];
+    }
+    [defaults synchronize];
+}
+
 + (void)setModel:(NSString *)model {
     NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
     NSString *key = [self namespacedKey:kAISettingsModelKey];
@@ -693,3 +716,5 @@ static NSString *g_currentAccount = nil;
 }
 
 @end
+
+
