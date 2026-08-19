@@ -1160,16 +1160,15 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
                timeoutInterval:60
                fewShotEnabled:YES
                  completion:^(NSString *reply, NSError *error) {
-            @synchronized (self) {
-                [g_inFlightChats removeObject:chatId];
-            }
             // 清空后还在路上的回复直接丢弃，避免旧内容回流
             if ([[AIContext shared] epoch] != replyEpoch) {
                 NSLog(kAITweakLogPrefix "上下文已清空，丢弃本次回复");
+                [self finishReplyCycleForChat:chatId];
                 return;
             }
             if (![self shouldReplyInChat:chatId]) {
                 NSLog(kAITweakLogPrefix "开关已关闭，丢弃本次回复");
+                [self finishReplyCycleForChat:chatId];
                 return;
             }
             if (error) {
@@ -1177,13 +1176,16 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
                 // 错误信息只弹窗提示用户本人，绝不发给聊天对象
                 [self presentAlertWithTitle:@"AI 回复失败"
                                     message:@"请求 DeepSeek 失败（网络异常、API Key 错误或余额不足），本次没有发送任何回复。请检查后重试。"];
+                [self finishReplyCycleForChat:chatId];
                 return;
             }
             [[AIContext shared] appendAssistant:reply timestamp:(NSTimeInterval)time(NULL) chatId:chatId];
             [self sendReply:reply chatId:chatId];
+            [self finishReplyCycleForChat:chatId];
         }];
     } @catch (NSException *exception) {
         NSLog(kAITweakLogPrefix "trigger 模式处理异常: %@", exception);
+        [self finishReplyCycleForChat:chatId];
     }
 }
 
@@ -1194,13 +1196,9 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
         if (!g_inFlightChats) g_inFlightChats = [NSMutableSet set];
         if (!g_pendingChats) g_pendingChats = [NSMutableSet set];
         if ([g_inFlightChats containsObject:chatId]) {
-            if ([self isBursting:chatId]) {
-                // 积压限流：只保留一次补回，避免亮屏后一口气回好几条
-                [g_pendingChats removeObject:chatId];
-                [g_pendingChats addObject:chatId];
-            } else if ([self looksLikeQuestion:content]) {
-                [g_pendingChats addObject:chatId];
-            }
+            // 有一条正在生成/打字/发送时，新消息统一挂起一轮；当前这条发完再补回。
+            [g_pendingChats removeObject:chatId];
+            [g_pendingChats addObject:chatId];
             return;
         }
     }
@@ -1243,16 +1241,15 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
                timeoutInterval:60
                fewShotEnabled:YES
                  completion:^(NSString *reply, NSError *error) {
-            @synchronized (self) {
-                [g_inFlightChats removeObject:chatId];
-            }
             // 清空后还在路上的回复直接丢弃
             if ([[AIContext shared] epoch] != replyEpoch) {
                 NSLog(kAITweakLogPrefix "上下文已清空，丢弃本次自动回复");
+                [self finishReplyCycleForChat:chatId];
                 return;
             }
             if (![self shouldReplyInChat:chatId]) {
                 NSLog(kAITweakLogPrefix "开关已关闭，丢弃本次自动回复");
+                [self finishReplyCycleForChat:chatId];
                 return;
             }
             if (error) {
@@ -1260,6 +1257,7 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
                 // 错误信息绝不发给聊天对象，只在用户手机上弹窗
                 [self presentAlertWithTitle:@"AI 自动回复失败"
                                     message:@"请求 DeepSeek 失败（网络异常或余额不足），本次没有发送任何回复。"];
+                [self finishReplyCycleForChat:chatId];
                 return;
             }
             // 模拟打字：按字数算时间（0.15 秒/字，0.8~8 秒）+ 0~1.5 秒随机波动；可在设置页关闭
@@ -1274,10 +1272,18 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
                            dispatch_get_main_queue(), ^{
                 [self sendReply:reply chatId:chatId];
                 // 回复期间收到的问题：补回一条
-                [self checkPendingForChat:chatId];
+                [self finishReplyCycleForChat:chatId];
             });
         }];
     });
+}
+
++ (void)finishReplyCycleForChat:(NSString *)chatId {
+    if (chatId.length == 0) return;
+    @synchronized (self) {
+        [g_inFlightChats removeObject:chatId];
+    }
+    [self checkPendingForChat:chatId];
 }
 
 // 当前回复已发出，看看回复期间有没有挂起的问题
