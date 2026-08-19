@@ -28,7 +28,7 @@ static NSArray<NSDictionary *> *aiParseFewShotSamples(NSString *samples, NSUInte
         if (line.length < 2) continue;
         unichar c0 = [line characterAtIndex:0];
         unichar c1 = [line characterAtIndex:1];
-        if (c1 != ':' && c1 != 0xFF1A) continue;  // 0xFF1A = 全角冒号：
+        if (c1 != ':' && c1 != 0xFF1A) continue;
         NSString *role = nil;
         if (c0 == 'Q' || c0 == 'q') role = @"user";
         else if (c0 == 'A' || c0 == 'a') role = @"assistant";
@@ -40,6 +40,89 @@ static NSArray<NSDictionary *> *aiParseFewShotSamples(NSString *samples, NSUInte
         [msgs addObject:@{@"role": role, @"content": content}];
     }
     return msgs;
+}
+
+static NSString *aiProviderKeyFromBaseURL(NSString *baseURL) {
+    NSString *lower = [baseURL.lowercaseString stringByTrimmingCharactersInSet:
+                       [NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    if ([lower containsString:@"bigmodel.cn"]) return @"zhipu";
+    if ([lower containsString:@"deepseek.com"]) return @"deepseek";
+    return @"custom";
+}
+
+static NSString *aiNormalizedBaseURL(NSString *baseURL) {
+    NSString *trimmed = [baseURL stringByTrimmingCharactersInSet:
+                         [NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    while ([trimmed hasSuffix:@"/"]) {
+        trimmed = [trimmed substringToIndex:trimmed.length - 1];
+    }
+    NSArray<NSString *> *suffixes = @[@"/chat/completions", @"/v1/chat/completions"];
+    NSString *lower = trimmed.lowercaseString;
+    for (NSString *suffix in suffixes) {
+        if ([lower hasSuffix:suffix]) {
+            trimmed = [trimmed substringToIndex:trimmed.length - suffix.length];
+            break;
+        }
+    }
+    return trimmed;
+}
+
+static NSString *aiStringFromContentNode(id node) {
+    if ([node isKindOfClass:[NSString class]]) {
+        return [(NSString *)node stringByTrimmingCharactersInSet:
+                [NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    }
+    if ([node isKindOfClass:[NSArray class]]) {
+        NSMutableArray *parts = [NSMutableArray array];
+        for (id item in (NSArray *)node) {
+            NSString *part = aiStringFromContentNode(item);
+            if (part.length > 0) [parts addObject:part];
+        }
+        return [parts componentsJoinedByString:@""];
+    }
+    if ([node isKindOfClass:[NSDictionary class]]) {
+        NSDictionary *dict = (NSDictionary *)node;
+        NSString *text = aiStringFromContentNode(dict[@"text"]);
+        if (text.length > 0) return text;
+        NSString *content = aiStringFromContentNode(dict[@"content"]);
+        if (content.length > 0) return content;
+    }
+    return @"";
+}
+
+static NSString *aiAPIErrorMessage(NSDictionary *json) {
+    if (![json isKindOfClass:[NSDictionary class]]) return @"";
+    id err = json[@"error"];
+    if ([err isKindOfClass:[NSDictionary class]]) {
+        NSString *msg = aiStringFromContentNode(err[@"message"]);
+        if (msg.length > 0) return msg;
+        msg = aiStringFromContentNode(err[@"msg"]);
+        if (msg.length > 0) return msg;
+    }
+    NSString *message = aiStringFromContentNode(json[@"message"]);
+    if (message.length > 0) return message;
+    return aiStringFromContentNode(json[@"msg"]);
+}
+
+static NSString *aiReplyFromJSON(NSDictionary *json) {
+    if (![json isKindOfClass:[NSDictionary class]]) return @"";
+    NSArray *choices = json[@"choices"];
+    if ([choices isKindOfClass:[NSArray class]] && choices.count > 0) {
+        NSDictionary *first = [choices firstObject];
+        if ([first isKindOfClass:[NSDictionary class]]) {
+            NSString *reply = aiStringFromContentNode(first[@"message"][@"content"]);
+            if (reply.length > 0) return reply;
+            reply = aiStringFromContentNode(first[@"delta"][@"content"]);
+            if (reply.length > 0) return reply;
+            reply = aiStringFromContentNode(first[@"text"]);
+            if (reply.length > 0) return reply;
+            reply = aiStringFromContentNode(first[@"content"]);
+            if (reply.length > 0) return reply;
+        }
+    }
+    NSString *reply = aiStringFromContentNode(json[@"data"][@"content"]);
+    if (reply.length > 0) return reply;
+    return aiStringFromContentNode(json[@"content"]);
 }
 
 + (NSUInteger)fewShotMessageCount {
@@ -55,25 +138,25 @@ static NSArray<NSDictionary *> *aiParseFewShotSamples(NSString *samples, NSUInte
          fewShotEnabled:(BOOL)fewShotEnabled
           completion:(void (^)(NSString *, NSError *))completion {
 
-    NSString *baseURL = [[AISettings baseURL] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-    if ([baseURL hasSuffix:@"/"]) baseURL = [baseURL substringToIndex:baseURL.length - 1];
+    NSString *baseURL = aiNormalizedBaseURL([AISettings baseURL]);
+    NSString *provider = aiProviderKeyFromBaseURL(baseURL);
     NSURL *url = [NSURL URLWithString:[baseURL stringByAppendingString:@"/chat/completions"]];
     NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:url];
     request.HTTPMethod = @"POST";
+    request.cachePolicy = NSURLRequestReloadIgnoringLocalCacheData;
     [request setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
+    [request setValue:@"application/json" forHTTPHeaderField:@"Accept"];
     [request setValue:[NSString stringWithFormat:@"Bearer %@", [AISettings apiKey]] forHTTPHeaderField:@"Authorization"];
     [request setTimeoutInterval:timeoutInterval > 0 ? timeoutInterval : 60];
 
-    // 系统提示词 + 会话历史
     NSMutableArray *payload = [NSMutableArray array];
-    // 固定的行为优先级：当前聊天决定回什么，真人样本决定怎么说，档案只做兜底。
-    NSString *priorityPrompt = @"【回复优先级】先看最近几条聊天，直接接住对方当前话题；不要为了展示风格主动引入旧话题。表达方式优先模仿本人真实发言样本，事实只来自当前对话和明确档案，绝不能从风格样本猜事实。不确定就简短反问或承认不知道。只输出准备发送给对方的聊天文本，不要解释你的分析过程。\n\n";
+    NSString *priorityPrompt = @"【回复优先级】先接住对方刚发来的这句话，再考虑语气模仿；不要为了展示风格主动引入旧话题。正常情况下，对方发来一句就要自然接一句，哪怕只是短回应，也别无故沉默。表达方式优先模仿本人最近真实发言，事实只来自当前聊天、明确档案和基础信息；不确定就简短反问、承认记不清，别硬编。只输出准备发给对方的聊天文本，不要解释分析过程。\n\n";
     NSString *finalPrompt = [priorityPrompt stringByAppendingString:(systemPrompt ?: @"")];
+
     NSArray *fewShot = @[];
     NSString *samples = fewShotEnabled ? [AISettings styleSamples] : @"";
     if (samples.length > 0) {
         fewShot = aiParseFewShotSamples(samples, 4);
-        // 解析不出 Q:/A: 时退回纯文本注入，兼容以前粘贴的自由格式样本
         if (fewShot.count == 0) {
             finalPrompt = [finalPrompt stringByAppendingFormat:
                 @"\n\n【本人手动提供的语气样本：只模仿表达方式，不把里面的地点、经历、喜好当成事实】\n%@", samples];
@@ -81,7 +164,7 @@ static NSArray<NSDictionary *> *aiParseFewShotSamples(NSString *samples, NSUInte
     }
     if (styleProfile.length > 0) {
         finalPrompt = [finalPrompt stringByAppendingFormat:
-            @"\n\n【本人真实发言样本与已学习语气档案：优先模仿句长、口头禅、标点和分寸；只模仿说法，不复制样本中的事实】\n%@", styleProfile];
+            @"\n\n【本人最近真实发言样本与已学习语气档案：优先模仿句长、口头禅、标点和分寸；只模仿说法，不复制样本中的事实】\n%@", styleProfile];
     }
     if (userProfile.length > 0) {
         finalPrompt = [finalPrompt stringByAppendingFormat:
@@ -104,20 +187,22 @@ static NSArray<NSDictionary *> *aiParseFewShotSamples(NSString *samples, NSUInte
     if (finalPrompt.length > 0) {
         [payload addObject:@{@"role": @"system", @"content": finalPrompt}];
     }
-    // 顺序：system → Few-Shot 范例 → 真实聊天上下文
     if (fewShot.count > 0) {
         [payload addObjectsFromArray:fewShot];
     }
     [payload addObjectsFromArray:messages];
 
-    NSDictionary *body = @{
-        @"model": [AISettings model],
+    NSMutableDictionary *body = [@{
+        @"model": [AISettings model] ?: @"",
         @"messages": payload,
-        @"max_tokens": @400,  // 限制输出长度：回复更短更快，防长篇大论
-        @"temperature": @([AISettings temperature]),
-        @"frequency_penalty": @([AISettings frequencyPenalty]),
-        @"presence_penalty": @([AISettings presencePenalty])
-    };
+        @"max_tokens": @320,
+        @"temperature": @([AISettings temperature])
+    } mutableCopy];
+    // 智谱兼容层在某些模型上对惩罚项更敏感，先用最小稳定参数集。
+    if (![provider isEqualToString:@"zhipu"]) {
+        body[@"frequency_penalty"] = @([AISettings frequencyPenalty]);
+        body[@"presence_penalty"] = @([AISettings presencePenalty]);
+    }
 
     NSError *jsonError = nil;
     NSData *jsonData = nil;
@@ -144,32 +229,41 @@ static NSArray<NSDictionary *> *aiParseFewShotSamples(NSString *samples, NSUInte
         }
 
         NSHTTPURLResponse *http = (NSHTTPURLResponse *)response;
-        NSLog(kAITweakLogPrefix "API HTTP 状态: %ld", (long)http.statusCode);
+        NSString *rawText = data.length > 0 ? [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] : @"";
         NSDictionary *json = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
-        NSLog(kAITweakLogPrefix "API 响应: %@", json ?: @"（非JSON）");
-        // HTTP 错误（401 Key 无效 / 402 余额不足 / 429 限流…）带状态码返回，便于弹窗精确提示
+        NSLog(kAITweakLogPrefix "API HTTP 状态: %ld", (long)http.statusCode);
+        NSLog(kAITweakLogPrefix "API 响应: %@", json ?: (rawText.length > 0 ? rawText : @"（非JSON）"));
+
+        NSString *apiMsg = aiAPIErrorMessage(json);
         if (http.statusCode >= 400) {
             NSString *errMsg = [NSString stringWithFormat:@"HTTP %ld", (long)http.statusCode];
-            NSString *apiMsg = json[@"error"][@"message"];
             if (apiMsg.length > 0) {
                 errMsg = [errMsg stringByAppendingFormat:@"：%@", apiMsg];
+            } else if (rawText.length > 0) {
+                NSString *snippet = rawText.length > 180 ? [rawText substringToIndex:180] : rawText;
+                errMsg = [errMsg stringByAppendingFormat:@"：%@", snippet];
             }
             completion(nil, [NSError errorWithDomain:@"WeChatAI"
                                                 code:http.statusCode
-                                            userInfo:@{NSLocalizedDescriptionKey: errMsg}]);
+                                            userInfo:@{
+                                                NSLocalizedDescriptionKey: errMsg,
+                                                @"rawResponse": rawText ?: @"",
+                                            }]);
             return;
         }
 
-        // 即使 HTTP 200，响应里带 error 也视为失败，优先显示可读的错误信息
-        NSString *apiErr = json[@"error"][@"message"];
-        if (apiErr.length > 0) {
-            NSString *errMsg = [NSString stringWithFormat:@"API 错误：%@", apiErr];
+        if (apiMsg.length > 0) {
+            NSString *errMsg = [NSString stringWithFormat:@"API 错误：%@", apiMsg];
             completion(nil, [NSError errorWithDomain:@"WeChatAI"
                                                 code:2
-                                            userInfo:@{NSLocalizedDescriptionKey: errMsg}]);
+                                            userInfo:@{
+                                                NSLocalizedDescriptionKey: errMsg,
+                                                @"rawResponse": rawText ?: @"",
+                                            }]);
             return;
         }
-        NSString *reply = json[@"choices"][0][@"message"][@"content"];
+
+        NSString *reply = aiReplyFromJSON(json);
         if (reply.length == 0) {
             NSString *message = [NSString stringWithFormat:@"API 返回异常(HTTP %ld)，响应没有文本内容",
                                  (long)http.statusCode];
@@ -177,7 +271,7 @@ static NSArray<NSDictionary *> *aiParseFewShotSamples(NSString *samples, NSUInte
                                                 code:1
                                             userInfo:@{
                                                 NSLocalizedDescriptionKey: message,
-                                                @"rawResponse": json ?: @"",
+                                                @"rawResponse": rawText.length > 0 ? rawText : (json ?: @""),
                                             }]);
             return;
         }
@@ -187,5 +281,3 @@ static NSArray<NSDictionary *> *aiParseFewShotSamples(NSString *samples, NSUInte
 }
 
 @end
-
-
