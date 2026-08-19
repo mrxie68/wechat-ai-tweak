@@ -898,8 +898,29 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
          timeoutInterval:(NSTimeInterval)timeoutInterval
          fewShotEnabled:(BOOL)fewShotEnabled
           completion:(void (^)(NSString *reply, NSError *error))completion {
+    [self sendWithRetry:history
+           systemPrompt:systemPrompt
+           styleProfile:styleProfile
+            userProfile:userProfile
+             friendInfo:friendInfo
+        timeoutInterval:timeoutInterval
+         fewShotEnabled:fewShotEnabled
+           retryHandler:nil
+             completion:completion];
+}
+
++ (void)sendWithRetry:(NSArray<NSDictionary *> *)history
+         systemPrompt:(NSString *)systemPrompt
+         styleProfile:(NSString *)styleProfile
+          userProfile:(NSString *)userProfile
+           friendInfo:(NSDictionary *)friendInfo
+      timeoutInterval:(NSTimeInterval)timeoutInterval
+       fewShotEnabled:(BOOL)fewShotEnabled
+         retryHandler:(void (^)(NSInteger nextAttempt, NSError *error, NSTimeInterval waitSeconds))retryHandler
+           completion:(void (^)(NSString *reply, NSError *error))completion {
     __block void (^attemptBlock)(NSInteger) = nil;
     __weak void (^weakAttemptBlock)(NSInteger) = nil;
+    NSInteger maxAttempts = retryHandler ? 2 : 3;
     attemptBlock = ^(NSInteger attempt) {
         [[AIAPIClient shared] sendMessages:history
                               systemPrompt:systemPrompt
@@ -909,10 +930,13 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
                               timeoutInterval:timeoutInterval
                               fewShotEnabled:fewShotEnabled
                                 completion:^(NSString *reply, NSError *error) {
-            if (error && [self shouldRetryError:error] && attempt < 3) {
+            if (error && [self shouldRetryError:error] && attempt < maxAttempts) {
                 double wait = attempt == 1 ? 2.0 : 4.0;
-                NSLog(kAITweakLogPrefix "请求失败，%.0f 秒后重试(%ld/3): %@",
-                      wait, (long)attempt, error);
+                NSLog(kAITweakLogPrefix "请求失败，%.0f 秒后重试(%ld/%ld): %@",
+                      wait, (long)attempt, (long)maxAttempts, error);
+                if (retryHandler) {
+                    retryHandler(attempt + 1, error, wait);
+                }
                 dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(wait * NSEC_PER_SEC)),
                                dispatch_get_main_queue(), ^{
                     if (weakAttemptBlock) weakAttemptBlock(attempt + 1);
@@ -1477,7 +1501,7 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
     });
 }
 
-// 聊天信息页“学习聊天风格”：确认后拉取最近记录 → DeepSeek 总结 → 存成本地档案
+// 聊天信息页“学习聊天风格”：确认后拉取最近记录 → AI 总结 → 存成本地档案
 + (void)confirmLearnStyleForChat:(NSString *)chatId {
     dispatch_async(dispatch_get_main_queue(), ^{
         UIViewController *top = tweakTopViewController();
@@ -1492,7 +1516,7 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
         UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"学习聊天风格"
                                                                        message:profile.length > 0
             ? @"这个好友已有学习档案。可以重新学习覆盖，或清除档案。"
-            : @"将读取这个好友最近 50 条文字聊天记录，并发送给 DeepSeek 总结你的说话风格（仅对这位好友生效）。\n\n记录只用于本次学习，原文不会保存，只保存风格总结。确定继续？"
+            : @"将读取这个好友最近 50 条文字聊天记录，并发送给当前配置的 AI 模型总结你的说话风格（仅对这位好友生效）。\n\n记录只用于本次学习，原文不会保存，只保存风格总结。确定继续？"
                                                                 preferredStyle:UIAlertControllerStyleAlert];
         [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
         [alert addAction:[UIAlertAction actionWithTitle:profile.length > 0 ? @"重新学习" : @"开始学习"
@@ -1531,6 +1555,8 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
     __block NSTimer *elapsedTimer = nil;
     __block NSInteger elapsedSec = 0;
     __block NSString *currentStage = @"读取记录";
+    __block BOOL learningFinished = NO;
+    __block dispatch_source_t learningWatchdog = nil;
 
     // 显示/更新“学习中”进度弹窗（带转圈）
     void (^updateProgress)(NSString *) = ^(NSString *stage) {
@@ -1555,6 +1581,11 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
                                                                   style:UIAlertActionStyleCancel
                                                                 handler:^(UIAlertAction *a) {
                     learningCanceled = YES;
+                    learningFinished = YES;
+                    if (learningWatchdog) {
+                        dispatch_source_cancel(learningWatchdog);
+                        learningWatchdog = nil;
+                    }
                     [elapsedTimer invalidate];
                     elapsedTimer = nil;
                     [progressAlert dismissViewControllerAnimated:YES completion:nil];
@@ -1570,6 +1601,14 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
     // 结束学习：关掉进度弹窗，再弹结果
     void (^finishLearning)(NSString *, NSString *) = ^(NSString *title, NSString *message) {
         dispatch_async(dispatch_get_main_queue(), ^{
+            if (learningFinished) return;
+            learningFinished = YES;
+            if (learningWatchdog) {
+                dispatch_source_cancel(learningWatchdog);
+                learningWatchdog = nil;
+            }
+            [elapsedTimer invalidate];
+            elapsedTimer = nil;
             UIAlertController *alert = progressAlert;
             progressAlert = nil;
             if (alert) {
@@ -1696,8 +1735,8 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
         }
 
         // 阶段 2：让 AI 总结风格
-        currentStage = @"等待 AI 回复";
-        updateProgress(@"记录读取完成，正在让 AI 总结你的说话风格…");
+        currentStage = @"等待 AI 回复（第 1/2 次）";
+        updateProgress(@"记录读取完成，正在让 AI 总结你的说话风格…\n当前尝试：第 1/2 次");
         // 语料瘦身：单条截断到 80 字、总量上限 2500 字，避免大语料拖慢 API（总结风格用不到全文）
         NSMutableArray *shortTexts = [NSMutableArray array];
         NSUInteger kept = 0;
@@ -1728,19 +1767,32 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
         NSLog(kAITweakLogPrefix "学习请求已发出，等待 AI 总结…");
 
         NSTimeInterval startTs = CFAbsoluteTimeGetCurrent();
+        dispatch_async(dispatch_get_main_queue(), ^{
+            learningWatchdog = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
+            if (learningWatchdog) {
+                dispatch_source_set_timer(learningWatchdog, dispatch_time(DISPATCH_TIME_NOW, 28 * NSEC_PER_SEC), DISPATCH_TIME_FOREVER, (uint64_t)(0.5 * NSEC_PER_SEC));
+                dispatch_source_set_event_handler(learningWatchdog, ^{
+                    if (learningFinished || learningCanceled) return;
+                    finishLearning(@"学习超时", @"这次总结等待太久了，已自动停止。一般是模型连接不稳定或接口超时，直接重试一次就行；如果经常出现，建议换更稳定的模型或稍后再试。");
+                });
+                dispatch_resume(learningWatchdog);
+            }
+        });
         [self sendWithRetry:messages
                systemPrompt:learnPrompt
                styleProfile:nil
-               userProfile:nil
-               friendInfo:[AISettings friendInfoForChat:chatId]
-               timeoutInterval:20 // 学习超时 20 秒，超时自动重试，避免干等一分钟
-               fewShotEnabled:NO
+                userProfile:nil
+                friendInfo:[AISettings friendInfoForChat:chatId]
+           timeoutInterval:10 // 学习用更短超时，避免网络抖动时长时间假卡住
+            fewShotEnabled:NO
+              retryHandler:^(NSInteger nextAttempt, NSError *retryError, NSTimeInterval waitSeconds) {
+                  if (learningCanceled || learningFinished) return;
+                  NSString *desc = retryError.localizedDescription ?: @"网络波动";
+                  currentStage = [NSString stringWithFormat:@"等待 AI 回复（第 %ld/2 次）", (long)nextAttempt];
+                  updateProgress([NSString stringWithFormat:@"模型连接不稳定，%.0f 秒后自动重试…\n当前尝试：第 %ld/2 次\n原因：%@", waitSeconds, (long)nextAttempt, desc]);
+              }
                  completion:^(NSString *reply, NSError *error) {
-            if (learningCanceled) return; // 已取消：忽略结果
-            dispatch_async(dispatch_get_main_queue(), ^{
-                [elapsedTimer invalidate]; // 停止计时
-                elapsedTimer = nil;
-            });
+            if (learningCanceled || learningFinished) return; // 已取消或已超时：忽略结果
             if (error) {
                 NSLog(kAITweakLogPrefix "学习风格失败(%.1f秒): %@",
                       CFAbsoluteTimeGetCurrent() - startTs, error);
@@ -1751,7 +1803,7 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
                 }
                 NSString *hint = @"";
                 if ([desc containsString:@"401"]) {
-                    hint = @"\n大概率是 API Key 无效或当前账号没配置 Key，请去设置页重新填写并保存，或去 DeepSeek 后台检查。";
+                    hint = @"\n大概率是 API Key 无效或当前账号没配置 Key，请去设置页重新填写并保存，或去当前服务商后台检查。";
                 } else if ([desc containsString:@"402"] || [desc containsString:@"余额"] ||
                            [desc containsString:@"insufficient"]) {
                     hint = @"\n大概率是余额不足。";
@@ -1759,7 +1811,7 @@ static NSMutableDictionary *g_recentMsgTimes = nil;
                     hint = @"\n网络超时，检查网络后重试。";
                 }
                 finishLearning(@"学习失败",
-                               [NSString stringWithFormat:@"调用 DeepSeek 失败：%@%@%@",
+                               [NSString stringWithFormat:@"调用当前服务商失败：%@%@%@",
                                 desc, hint,
                                 raw.length > 0 ? @"\n\n完整响应已复制到剪贴板，直接粘贴发作者。" : @""]);
                 return;
